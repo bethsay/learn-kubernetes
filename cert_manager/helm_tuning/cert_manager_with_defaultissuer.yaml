@@ -1,0 +1,6 @@
+ingressShim:
+  defaultIssuerName: "my-tls-clusterissuer"
+  defaultIssuerKind: "ClusterIssuer"
+  defaultIssuerGroup: "cert-manager.io"
+crds:
+  enabled: true

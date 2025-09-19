@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mongo-limitrange
+  namespace: mongo-dev
+spec:
+  limits:
+  - type: Container
+    max:                #maximum allowed resource limits  for any container in the namespace
+      cpu: 1000m        #max cpu limit.
+      memory: 512Mi     #max mem limit.
+    min:                #---Optional---minimum allowed resource request for any container in the namespace
+      cpu: 100m         #min cpu request.
+      memory: 64Mi      #min mem request.
+    default:            #---Optional---If ignored, max values are applied on containers missing resource limit
+      cpu: 500m         #default cpu limit.
+      memory: 256Mi     #default mem limit.
+    defaultRequest:     #---Optional---If ignored, max values are applied on containers missing resource request
+      cpu: 250m         #default cpu request.
+      memory: 128Mi     #default mem request.

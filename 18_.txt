@@ -1,0 +1,114 @@
+Lets run the fibonacci_project in k8s.
+Componenets as Docker containers: NGINX, REACT, EXPRESS, WORKER, REDIS, POSTGRES.
+Componenets as k8s resources: Ingress, ClusterIP(react, express, redis, postgres), Deployment(react(3), express(3), worker(1), redis(1), postgres(1)), PV, PVC
+NGINX in docker-compose has the role of reverse proxy of REACT and EXPRESS. It will be replaced by Ingress resource.
+
+Lets cleanup all k8s resources created prior to this.
+    #cd fibonacci_project 
+    #kubectl get all
+    #kubectl delete -f deployment.yaml
+    #kubectl delete -f service.yaml
+    #kubectl get all
+
+Lets create deployment and service for all fibonacci_project componenets
+    #mkdir fibonacci_project/k8s
+    #cd fibonacci_project/k8s
+    #touch react-deployment.yaml                #Open in VScode. Type "deploy" and then TAB key to autocomplete the k8s config
+        ->configure deployment to run 3 pods using the image betzdockz/fib-react.
+    #touch react-service.yaml                   #Open in VScode. Type "service" and then TAB key for autocomplete the k8s config
+        ->configure ClusterIP based network service for all react pods.
+    #touch express-deployment.yaml
+        ->configure deployment to run 3 pods using the image betzdockz/fib-express.
+    #touch express-service.yaml
+        ->configure ClusterIP based network service for all express pods.
+    #touch worker-deployment.yaml
+        ->configure deployment to run 1 pod using the image betzdockz/fib-worker.
+fib-worker container has no operations on incoming requests. So containerPort: is not defined in deployment and worker-service is not required.
+In fibonacci_project/docker-compose.yml, we had bind mounts and node_modules volumes for react, express and worker.
+Now that prod images of react, express and worker have been built, volumes are not considered for their deployment specifications.
+    #touch redis-deployment.yaml
+        ->configure deployment to run 1 pod using the public redis image.
+    #touch redis-service.yaml
+        ->configure ClusterIP based network service for redis pod.
+    #touch postgres-deployment.yaml
+        ->configure deployment to run 1 pod using the public postgres image.
+    #touch postgres-service.yaml
+        ->configure ClusterIP based network service for postgres pod.
+For postgres and redis deployment, we will not define imagePullPolicy. Default imagePullPolicy is Always.
+The replicas for postgres and redis must be 1. Increasing this will cause compromise the data integrtiy. 
+Using StatefulSet instead of Deployment will allow us to scale redis and postgres clusters.
+
+Lets create volumes to maintain pgdata and redisdata
+Pod volume is available for all containers in a pod. Some types are emptydir, hostpath, pvc
+emptydir can survive container restarts, but it is tied to pod lifecycle. Use this when you want a temp storage to be shared between your multi container pod.
+hostpath is similar to bind mounts and is not tied to pod lifecycle. But you may use this only if the cluster is running with 1 node.
+    If you run a deployment with one  replica on a multinode cluster, the data in pod volume will not be available if the pod is deployed to a different node.
+    If you run a deployment with many replica on a multinode cluster, the data on the pod replicas will not be the same.
+pvc allows us to offload the storage management. Once we define size and accessMode that we need, k8s will find a best match for it.
+    k8s will compare pvc spec with all pv in the cluster. Once exact match is found, k8s will bind our pvc with that pv.
+    If exact match of pv is not found. k8s will create a pv using pvc.spec using default storageclass.
+    If there is no storageclass with is-default annotation, pvc will be in pending state.
+Check if there is a default storageclass is present
+    #kubectl get sc
+    #kubectl describe sc <sc_name>
+On DockerDesktop you should see sc by the name hostpath. On minikube its named standard.
+Lets create pvc for postgres and redis.
+    #touch postgres-pvc.yaml                    #Open in VScode. Type "pvc" and then TAB key to autocomplete the k8s config
+        ->Set the size as 1gb and accessMode as rwo.
+    #touch postgres-pvc.yaml
+        ->Set the size as 1gb and accessMode as rwo.
+Update the postgres and redis deployment to use these pvc.
+    #vim postgres-deployment.yaml
+        ->Define a volume in pod template to use postgres-pvc. Within postgres container, define the volumemount with name of volume and mountpath.
+    #vim redis-deployment.yaml
+        ->Define a volume in pod template to use redis-pvc. Within redis container, define the volumemount with name of volume and mountpath.
+
+Lets set the env variables required by postgres, express and worker.
+We can define env.name and env.value in deployment template. This must be repeated in all deployment files.
+A better way is to setting these variables as key value pairs in a configmap. The deployment that require env variables can fetch from configmap. 
+configmaps are k8s resources used to store configurations, properties, env variables, commands, etc. They can be stored as key-values pairs or as files. 
+    #touch fibonacci-configmap.yaml
+        ->Set redis host and port. Set postgres host, port and dbname
+For passing sensitive data like credentials, keys, tokens, certificates, etc, secrets must be used instead of configmap.
+Every key in a secret, must be set with a base64 encoded string of its value. When the secret is passed to any pod k8s will decode every value.
+    #echo -n <username> | base64
+    #echo -n <password> | base64
+    #touch fibonacci-secret.yaml
+        ->This file will not be in repo due to gitignore rule. Recreate it with k8s_template/fibonacci-secret-template.yaml.
+        ->Map the keys pguser and pgpassword to their base64 encoded values
+Now lets apply these to the deployments of worker, express and postgres.
+    #vim worker-deployment.yaml
+        ->Set the container spec to use envfrom fibonacci-configmap
+    #vim express-deployment.yaml
+        ->Set the container spec to use envfrom fibonacci-configmap and fibonacci-secret 
+    #vim postgres-deployment.yaml
+        ->Set the env names POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB and reference it to the respectives keys in configmap and secret.
+
+Lets setup fibonacci_project to recieve user traffic from outside the cluster.
+NodePort service can allow one set of pods to be accessible via the nodeip and a nodeport between 30000-32727.
+LoadBalancer service can allow one set of pods to be accessible via an externalip and a targetport.
+Both these options does not fit our requirement of exposing 2 sets of pods via https.
+Using ingress we can set rules to forward traffic to different services.
+Ingress is not a default feature. It need a controller to be installed. We will install and use the nginx-ingress controller.
+    #helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx/
+    #helm repo list
+    #helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace
+Check if the ingressclass (not scoped by ns) is available and ingress controller (scoped by ns) is healthy/running
+    #kubectl get ingressclasses
+    #kubectl get all -n ingress-nginx
+Multiple rules can be defined to match hostnames. In each hostname rule, multiple rules can be defined to match url path.
+    #touch fibonacci-ingress.yaml
+        ->If url host is fibonacci.com and path is "/", then forward to react-service and its port
+        ->If url host is fibonacci.com and path is "/api", then forward to express-service and its port
+For ingress, various nginx functionalities can be enabled via annotations.
+Lets enable Url rewrite with the rewrite-target annotation.
+    #vim fibonacci-ingress.yaml
+        ->Use annotation to set rewrite target as the first placeholder (https://url.com/$1/$2/$3)
+        ->in the rule that to forwards traffic to react, set entire path to be loaded into rewrite placeholder
+        ->in the rule that to forwards traffic to express, load everything that trails /api/ into rewrite placeholder
+
+Now that all yaml files within k8s fibonacci_project/k8s are create and is ready to be applied,
+    #cd fibonacci_project
+    #kubectl apply -f k8s/
+This is easier than applying the config of individual yaml files. Also, you wont need to worry about running apply on any files.
+If there were any yaml files within the subfolder of fibonacci_project/k8s, they will not get applied. kubectl apply must be run again with the subfolder as path.

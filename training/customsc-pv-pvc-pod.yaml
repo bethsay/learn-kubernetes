@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysc-pv
+spec:
+  storageClassName: mysc
+  capacity:
+    storage: 100Mi
+  #volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+  #persistentVolumeReclaimPolicy: Recycle
+  hostPath:
+    path: /home/mysc-pv
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysc-pvc
+spec:
+  storageClassName: mysc
+  resources:
+    requests:
+      storage: 70Mi
+  #volumeMode: Filesystem
+  accessModes:
+    - ReadWriteMany
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mysc-pod
+  labels:
+    name: mysc-pod
+spec:
+  containers:
+  - name: mysc-pod
+    image: nginx
+    volumeMounts:
+      - mountPath: /usr/share/nginx/html
+        name: data
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "250m"
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+    ports:
+      - containerPort: 80
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: mysc-pvc

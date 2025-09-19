@@ -1,0 +1,8 @@
+namePrefix: express-
+labels:
+  - pairs:
+      tier: frontend
+    includeSelectors: true 
+resources:
+  - deploy.yaml
+  - service.yaml

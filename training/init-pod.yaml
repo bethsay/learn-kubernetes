@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-container-pod
+spec:
+  volumes:
+  - name: workdir
+    emptyDir:
+      sizeLimit: 40Mi
+  containers:
+  - name: primary
+    image: nginx
+    volumeMounts:
+    - name: workdir
+      mountPath: /usr/share/nginx/html
+    ports:
+    - containerPort: 80
+    resources:
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+      requests:
+        memory: "64Mi"
+        cpu: "250m"
+  initContainers:
+  - name: init
+    image: busybox
+    command:
+    - "wget"
+    - "-O"
+    - "/initcontent/index.html"
+    - "https://password.town"
+    volumeMounts:
+    - name: workdir
+      mountPath: /initcontent
+    resources:
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+      requests:
+        memory: "64Mi"
+        cpu: "250m"

@@ -1,0 +1,33 @@
+resources:
+  - ../../base
+  - namespace.yaml
+secretGenerator:
+- name: secret
+  behavior: replace
+  envs:
+  - ./secret.key
+namespace: mongo-dev
+labels:
+  - pairs:
+      env: dev
+    includeSelectors: true
+namePrefix: dev-
+replacements:
+- source:
+    kind: Service
+    name: db-service
+    fieldPath: metadata.name
+  targets:
+  - select:
+      kind: Deployment
+      name: express-deploy
+    fieldPaths:
+    - spec.template.spec.containers.0.env.2.value
+patches:
+  - target:
+      kind: Service
+      name: mongo-express-service
+    patch: |-
+      - op: replace
+        path: /spec/ports/0/port
+        value: 8082

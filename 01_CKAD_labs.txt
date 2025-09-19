@@ -1,0 +1,679 @@
+Kubernetes Resources
+Node is the host machine that is hosting the k8s cluster.
+Pod is a runtime environment for containers. The Standard Practice is to run one container in one pod but you are allowed to run multiple containers in any pod.
+Pod gets internal IP when they get created. Everytime the pod gets recreated or rebooted, it gets a new IP and no data from previous runtime will be present.
+    If a pod has secondary containers, it must fit one of these roles. If not re-evaluate why it isnt in its own pod. 
+    Sidecar container   : To enhance the primary. Sidecar container could enable logging, monitoring, backup of primary container  
+    Adapter container   : To modify or translate requests from primary for other pods or k8s resource.
+    Ambassador container: To sanitise or proxy the requests destined for the primary.
+    spec.initContainers : To preload data or run preflight scripts for primary. This is a pod.spec, while the others were only logical types.
+                          The primary container will be in Waiting state until all initContainers complete their run with exit code 0.
+Service is a network unit. Services also gets internal IP when they get created
+Service is mapped to a pod by selectors. When that pod gets recreated it is tracked by the service.
+Service provides stable accesspoint for pods and is not affected by pod lifecycle. 
+ClusterIP service is the default type. It is reachable only within a k8s cluster. ClusterIP service allows select pods to be reachable by k8s resources.
+Headless service is a ClusterIP service whose IP is set to none. This causes the service to have same IP of its target pod. 
+    When we need to connect 1 service to exactly 1 pod. 
+    [[ClusterIP service]]-[[localIP]]==[[Headless service]] 
+NodePort is a service that uses a port on across all k8s nodes to handle requests from outside the cluster. 
+    Allowed range is 30000-32767. Access would by via http://node.ip.addr:nodePort. 
+    [[ClusterIP service]]+[[nodePort]]==[[NodePort service]]
+LoadBalancer is a service that that can recieve traffic from one of the external IPs assigned to the cluster. 
+    A nodePort gets auto assigned to LB if not set to none. Access would be via http://external.ip.addr:servicePort.
+    [[NodePort service]]+[[externalIP]]==[[LoadBalancer service]]
+ExternalName is a service that allows resources in a namespace to connect to resources outside the namespace or cluster.
+    Basically it is a CNAME record that maps a service_name to a valid domain name. No selectors, ports or IPs are defined in ExternalName spec.
+Ingress can process http and https requests from outside the cluster. It can have path based and domain based routing rules. It can perform SSL offloading.
+    Although backend spec is a service, all traffic bypasses the service and directly reach the service endpoints.
+IngressClass is the type of ingress controller that will implement the ingress spec. There are about 30 options which include nginx, f5, harproxy.
+    The desired IngressClass must be manually setup prior to creation of any ingress. Multiple ingressclass can be setup on the same cluster.
+    If none of the available ingressclass has been labeled as default, Every ingress must have spec.ingressClassName defined.
+There are 4 levels of Networks present in a Kubernetes Cluster. Communication between each level is facilitated by NAT.
+    Node Network      : This is a physical/virtual/external network that connects the nodes and various cloud based services/resources. This would be set in place by the CSP or hosting provider
+    Cluster Network   : This is software defined network that connects Pods, Services and Ingress. This is set in place by Kubernetes, managed by kube-proxy, governed by k8s admin via api-server
+    Pod Network       : This is software defined network that connects all pods with each other. This is just like the cluster network but managed by a cni plugin like Calico
+    Container Network : This is the used by containers running within the same pod. This is implemented by Inter-Process Communication, no IP address are needed.
+ConfigMap is key:value store. env variables and config properties may be stored to be referenced by any container in any pod.
+Secrets is a store for sensitive data. credentials, tokens, tlscerts are stored to be referenced by any pods.
+Volumes allows for data persistance. Using volumes we can ensure data is not lost when pods crash or get redeployed
+Persistant Volume makes any storage available to be used by a cluster. Storage may be local, nfs, cloud, or any other type. pv is outside the scope of namespaces.
+    Ops team manages storage uptime, availablity, capacity, backups, etc.
+    Ops team creates pv definitons for app teams to use.
+    Node/Local/hostpath storage may provide more performance but at greater risk compared to remote storage.
+    Data in hostpath can be accessed only by the pods running in the same node. Data will be lost if node crashes.
+Persistant Volume Claim are expectation of storage. k8s compares storage expectation with available pv. Once the exact match is found, pvc and pv are bound.
+    App team plan storage parmaeters based on the data that must persist beyond the life of a pod.
+    App team creates pvc definitons with the parameters to contain app persistant data.
+StorageClass dynamically manages pv creation using a provisioner. When pvc cannot match with any pv, storageclass will dynamically create a pv with specifications of pvc.
+Job is a controller of pods that must run only for the duration of its task. Pods that perform batch processing or calculations on existing data or generate reports are managed using jobs.
+    container restartPolicy cannot be set as Always. Default value is Never. For Deployments and StatefulSet, the default container restartPolicy is Always.
+    Pods that complete their task will be idle and remain alive with the status Completed. Auto cleanup can be defined with spec.ttlSecondsAfterFinished
+Cronjobs is a controller of jobs and its pods. Cronjobs allow jobs to run as per a schedule
+ReplicaSet is a controller of pods. ReplicaSet can replicate its pod any number of times and ensure all replicas are resiliant.
+    Once ReplicaSet is created Replica count can be managed at anytime but pod spec cannot be modified.
+Deployment is a controller of ReplicaSets. Deployments allow us to change pod spec of live application by creating new replicaset for each update.
+    Updates are implemented by controlling the scaling up the updated replicaset and scaling down the outdated replicasets.
+    Update history is also maintained by not not deleting outdated replicaset. This allows us to rollback to any revision if the implemented updates doesnt meet expectations.
+DaemonSet is a controller of pods that ensures its replicas are running on every node of the cluster.
+    When new nodes are added to the cluster, DaemonSet will create a pod replica on it.
+StatefulSet is a controller of pod. Stateful applications state and funtionality depends on coherent data records. database are a types of stateful application 
+    StatefulSet maintain persistant and sequencial pod identifier for every replica it creates. If any pod get replaced, it retains pod_id(pod_name-ordinance).
+    Stateful application that run as a cluster may have identical spec but will have unique roles (primary/master/standby/readonlyreplica) so that data integrity is maintained.
+    Even though data available every stateful pod is identical, they do not share the same storage. Sync process run on the replicas to maintain data consistency. 
+    Storage used by a pod is mapped to its pod_id. If and when it is recreated, the same storage is mounted on it.
+    Scaling up and down of replica is strictly sequential. pod_name-4 will not get created until pod_name-3 is running. When scaling down, pod_name-3 will begin termination only if pod_name-4 has been deleted.
+    Pods of StatefulSet can be setup with a service. But unlike Deployment, every pod will have a headless service, giving them unique DNS endpoint as a subdomain of the service
+NetworkPolicy can be enforced after installing network plugin(Calico). Without NetworkPolicy all traffic is allowed within a cluster.
+    Communication between pods is governed by NetworkPolicy. When NetworkPolicy is created for any pod or namespace, only sources that match the policy will be allowed. 
+        #kubectl get netpol -A
+
+Deploying MongoDB
+    #mkdir mongo_k8s
+    #touch mongo_k8s/mongodb-deployment.yaml
+        ->Open in VScode. Type "deploy" and then TAB key to autocomplete the k8s config
+        ->one replica of mongodb. Pull docker image mongo. Open port 27017. Pass env variables of dbroot user and pass from secrets.
+    #touch mongo_k8s/mongo-secret.yaml
+        ->Open in VScode. Type "secret" and then TAB key to autocomplete the k8s config
+        ->This file has been excluded using gitignore. Recreate this with a copy of k8s_template/k8s_secret-template.yaml
+    #touch mongo_k8s/mongodb-service.yaml
+        ->Open in VScode. Type "service" and then TAB key to autocomplete the k8s config
+        ->Connect port 27017 on service with 27017 on pod.
+    #kubectl apply -f mongo_k8s/
+    #kubectl get all
+        ->Pod is CrashLoopBackOff with 3 restarts
+    #kubectl describe pod/<pod_name>
+        ->Containers: mongodb: State: Waiting
+        ->                     Reason: CrashLoopBackOff
+        ->Containers: mongodb: Last State: Terminated
+        ->                     Reason: OOMKilled            #Out Of Memory
+        ->                     Exit Code: 1
+        ->Containers: mongodb: Ready: False
+        ->Containers: mongodb: Restart Count: 4
+    #vim mongo_k8s/mongodb-deployment.yaml
+        ->Increase memory limit. Crosscheck with offical documentation.
+        ->spec: template: containers: resources: limits: memory: "256Mi".
+    #kubectl apply -f mongo_k8s/
+    #kubectl get all -o wide
+        ->Pod is running. Note the pod IP
+    #kubectl describe pod/<pod_name>
+        ->Containers: mongodb: State: Running
+        ->Containers: mongodb: Ready: True
+        ->Containers: mongodb: Restart Count: 0
+    #kubectl describe service/mongodb-service
+        ->Endpoints: should match IP:port of pod_name
+    #kubectl logs -f pod/<pod_name>
+    #kubectl exec -it pod/<pod_name> -- bash
+        #w      #free -h        #top
+After we are done playing around, lets cleanup
+    #kubectl delete -f mongo_k8s/
+
+Deploying MongoExpress
+    #touch mongo_k8s/mongoexpress-deployment.yaml
+        ->one replica of mongo-express. Open port 8081. Pass dbuser, dbpass, dbhost, expressuser, expresspass variables from secret and configmap
+    #vim mongo_k8s/mongo-secret.yaml
+        ->This file has been excluded using gitignore. Update with base64 (expressuser) and base64(expresspass)
+    #touch mongo_k8s/mongo-configmap.yaml
+        ->Define dbhost as mongodb-service
+    #touch mongo_k8s/mongoexpress-service.yaml
+        ->Use LoadBalancer type. connect port 8081 on service with 8081 on pod.
+    #kubectl apply -f mongo_k8s/
+        ->metadata: name: is not allowed to have '_' char. The '-' char is allowed. I had to update all occurances of 'mongo_express'
+We should be able to access the mongoexpress via browser http://localhost:8081/. I got page not responding
+    #kubectl get all -o wide
+    #kubectl describe service/mongoexpress-service
+        ->Endpoint was empty. Notice Selector: key=value
+    #kubectl describe pod/<express_pod_name>
+        ->Labels: key=value. This matched exactly with Selector in service.
+        ->Containers: mongoexpress: State: Waiting
+        ->                          Reason: CrashLoopBackOff
+        ->Containers: mongoexpress: Last State: Terminated
+        ->                          Reason: Error               ->container runtime issue. Check logs
+        ->                          Exit Code: 1
+        ->Containers: mongoexpress: Ready: False
+        ->Containers: mongoexpress: Restart Count: 4
+    #kubectl logs -f pod/<express_pod_name>
+        ->Could not connect to database: Authentication failed.
+        ->newline was added at the end of dbuser and dbpass.
+Repeat base64 encoding of all secrets. Force remove newline with "echo -n"
+    #vim mongo_k8s/mongo-secret.yaml
+        ->Update base64 of all secrets
+    #kubectl apply -f mongo_k8s/
+    #kubectl logs -f pod/<express_pod_name>
+        ->Mongo Express server listening. Server is open to allow connections.
+Login to Express via browser http://localhost:8081/. Signin with expressuser and expresspass. Create db. Delete db.
+    #kubectl get all -o wide
+    #kubectl describe service/mongoexpress-service
+        ->Endpoint: matches <pod-ip>:<containerPort>
+MongoExpress is accessible on browser via LB type of external service.
+Lets try NP type of external service.
+    #cp -p mongo_k8s/mongoexpress-service.yaml mongo_k8s/mongoexpress-service-np.yaml
+    #mv mongo_k8s/mongoexpress-service.yaml mongo_k8s/mongoexpress-service.yaml.tmp
+    #vim mongo_k8s/mongoexpress-service-np.yaml
+        ->Change type to NodePort. Define spec: ports: nodePort: 30002. Allowed range is 30000-32767.
+        ->If nodePort is not set, k8s will assign a random port. k8s did this when it created previous LB service.
+    #kubectl apply -f mongo_k8s/
+    #kubectl get all -o wide
+        ->For Type NodePort, External-IP will be none.
+    #kubectl describe service/mongoexpress-service
+Login to Express via browser http://localhost:30002/. Signin with expressuser and expresspass.
+LB access was via http://external.ip.addr:servicePort and NP access was via http://node.ip.addr:nodePort.
+I prefer LB so lets move NP service as yaml.tmp
+    #mv mongo_k8s/mongoexpress-service-np.yaml mongo_k8s/mongoexpress-service-np.yaml.tmp
+    #mv mongo_k8s/mongoexpress-service.yaml.tmp mongo_k8s/mongoexpress-service-lb.yaml
+After we are done playing around, lets cleanup
+    #kubectl delete -f mongo_k8s/
+
+Namespace
+    #kubectl get ns
+    #kubectl create ns <namespace_name>         ->Do not use a name that starts with "kube-"
+    #kubectl delete ns <namespace_name>
+Use ns for defining groups or resources or apps or projects.
+This allows project/app teams to run their k8s resource with any unique metadata without worrying if metadata conflicts with other projects/apps on same cluster.
+Admins can create an ns that contain a group of resources to be shared by multiple teams while maintaing ownership over its access and config.
+This allows an copies project/app to run on a cluster as dev, staging, testing env.
+Admins can set cpu, mem, storage quotas for a project via ns. Excessive consumption in one ns will not affect operation of another ns.
+mongodb and mongoexpress had been running in the default namespace.
+Lets have a namespace that exclusively for mongo
+    #touch mongo_k8s/mongo-namespace.yaml
+        ->autocomplete is not available yet. Set metadata: name: mongo-dev needs to be defined. No spec.
+    ->Edit every yaml file in mongo_k8s/, Add metadata: namespace: mongo-dev.
+    #kubectl apply -f mongo_k8s/
+    #kubectl get ns
+    #kubectl get all
+    #kubectl get all -n mongo-dev
+    #kubectl describe service/mongoexpress-service -n mongo-dev
+Login to Express via browser http://localhost:8081/.
+If adding the flag '-n <ns_name>' for every kubectl command bothers you, consider installing kubectx to use kubens command to set an active namespace
+    #kubens <ns_name>
+Deleting a namespace deletes every k8s resource scoped within it.
+After we are done playing around, lets cleanup
+    #kubectl delete ns mongo-dev     OR     #kubectl delete -f mongo_k8s/
+We could make a copy of mongo_k8s, set ns as mongo-test across all yaml, set svcport as 8082 and apply it.
+This will allow us to run 2 instances of mongo db and express on 8081 and 8082, completely isolated from each other.
+    #kubectl api-resources --namespaced=true
+    #kubectl api-resources --namespaced=false
+These commands will list resources that are Inscope and Outscope of namespace.
+Nodes, Ingress, Volumes and Namespaces are some not scoped by a namespace.
+
+Resource requests, limits
+cpu and mem are limited node compute resources that must be shared by the pods running on it.
+Without tracking the cpu and mem utilization on a node, the scheduler might assign it to run more pods that can be handled.
+Also, Any pod at anytime might get stuck or start some long running resource intense process.
+In both these scenario, all pods will have performance issues and crash or the node itself might crash and go offline.
+resource requests and limits are set by project/app teams on all the containers on every pod and deployment
+These values allow the scheduler to plan pod deployment and kublet to manage running pods such that the node and other pods do not crash.
+The minimum cpu and mem needed by a container to operate normally are set as resource requests.
+    The scheduler runs the pod on any node that can reserve the total resources requested by all containers of a pod.
+    If scheduler cannot find a nodes in the cluster that has enough available resources to satisfy the request, the pod will not start and remain as pending(status).
+The maximum cpu and mem that a container is expected to consume are set as resource limits.
+    The kublet will terminate a pod with OOMKilled status if any of the pod containers cross the memory limit.
+    If a container cpu consumption reaches the limit, kublet will perform cpu throttling. The pod will continue Running(status) but might observe performance bottleneck.
+
+ResourceQuota
+ResourceQuota defines total limits, request and count of k8s resources allowed in a namespace. Cluster admins who create namespace also decide on it ResourceQuota.
+When ResourceQuota is applied in a ns, pods missing resource limits and requests will be blocked by default. This can be resolved by admins using LimitRange
+Lets create the mongo-dev namespace and apply quota to it
+    #kubectl apply -f mongo_k8s/mongo-namespace.yaml
+    #kubectl describe ns mongo-dev
+    #kubectl create quota mongo-quota --hard=cpu=2,memory=2G,pods=4 -n mongo-dev
+    #kubectl describe ns mongo-dev
+You will see quotas have been set for cpu, mem and number of pods that have been set are for resource requests.
+These are shorthand for request.cpu, request.memory, number of pods
+Lets set more quotas. Autocomplete is not available for ResourceQuota in VScode, so lets generate it with a dryrun
+    #kubectl create quota mongo-quota --hard=cpu=2,memory=2G,pods=4 -n mongo-dev --dry-run=client -o yaml > mongo_k8s/mongo-quota.yaml
+    #vim mongo_k8s/mongo-quota.yaml
+        ->Set quotas for limits, services and deployments
+    #kubectl apply -f mongo_k8s/mongo-quota.yaml
+    #kubectl get quota -n mongo-dev
+    #kubectl describe quota -n mongo-dev
+    #kubectl describe ns mongo-dev
+Let deploy all mongo resources.
+    #kubectl apply -f mongo_k8s/
+    #kubectl get all -n mongo-dev
+    #kubectl describe quota -n mongo-dev
+    #kubectl describe ns mongo-dev
+Once any of the quotas are used up, and you try to create new resources, you will denied with a 403 Forbidden error. 
+Lets try this. Delete all deployments, its pods, and all services. Reduce the quota and redeploy all mongo resources 
+    #kubectl delete all --all -n mongo-dev
+    #vim mongo_k8s/mongo-quota.yaml
+        ->Set smaller quotas for services and deployments
+    #kubectl apply -f mongo_k8s/mongo-quota.yaml
+    #kubectl apply -f mongo_k8s/
+Once we done exploring ResourceQuota, lets cleanup
+    #kubectl delete ns mongo-dev
+
+LimitRange
+LimitRange specifies the range of compute resources allowed for any containers in a namespace.
+If any container is missing resource limits or requests, LimitRange can fill that spec.
+This allows pods that are missing resource spec to get deployed in ResourceQuota enforced namespaces 
+Lets see if deployments that are missing resource spec can operate in an ns with ResourceQuota
+    #kubectl apply -f mongo_k8s/
+    #kubectl get all -n mongo-dev
+Ensure ResourceQuota is applied in mongo-dev
+    #kubectl describe ns mongo-dev
+Delete the deployment that have resource limits and requests
+    #kubectl delete deployment.apps/mongodb-deployment deployment.apps/mongoexpress-deployment -n mongo-dev
+Create new copies of mongodb and mongoexpress deployments without any resource spec and apply it 
+    #mkdir mongo_k8s/limitrange/
+    #cp mongo_k8s/mongodb-deployment.yaml mongo_k8s/mongoexpress-deployment.yaml mongo_k8s/limitrange
+    #vim mongo_k8s/limitrange/mongodb-deployment.yaml
+        ->Delete the block spec.template.spec.containers.resources
+    #vim mongo_k8s/limitrange/mongoexpress-deployment.yaml
+        ->Delete the block spec.template.spec.containers.resources
+    #kubectl apply -f mongo_k8s/limitrange/
+Check deployment status
+    #kubectl get all -n mongo-dev
+    #kubectl describe deployment.apps/mongodb-deployment | less
+    #kubectl describe replicaset.apps/<replicaset_name> | less
+You will see Error creating pods is forbidden: failed quota.
+Lets create LimitRange. Refer the yaml files in https://kubernetes.io/docs/concepts/policy/limit-range/ page and in all links listed in the What's next section
+We cannot use kubectl create and there is no autocomplete in VScode.
+    #touch mongo_k8s/limitrange/mongo-limitrange.yaml
+        ->Set min cpu 100 mili-cpu and mem as 64 MebiBytes.
+        ->Then double it for defaultRequest. Double again for default. Double again for max.
+    #kubectl apply -f mongo_k8s/limitrange
+    #kubectl describe ns mongo-dev
+    #kubectl get limits -n mongo-dev
+    #kubectl describe limits -n mongo-dev
+    #kubectl get all -n mongo-dev
+You can wait for the replicasets to create pods or kubectl delete replicaset_name, which will get replaced by the deployment
+    #kubectl describe pod/<pod_name> -n mongo-dev
+The min, default and defaultrequest in limitrange are optional.
+Once we are done exploring LimitRange, lets cleanup
+    #kubectl delete ns mongo-dev
+
+Kustomize
+Kustomize allows us to templatize our app. Lets recreate mongodb and mongoexpress as templates.
+    #mkdir -p mongo_kustom/base/db
+    #vim mongo_kustom/base/db/deploy.yaml
+        ->copy contents of mongodb-deployment here.
+        ->remove all selector and labels. Remove namespace. Change metadata.name to deploy. Change secretKeyRef.name to secret
+    #vim mongo_kustom/base/db/service.yaml
+        ->copy contents of mongodb-service here.
+        ->remove selector. Remove namespace. Change metadata.name to service.
+    #vim mongo_kustom/base/db/kustomization.yaml
+        ->list resources: as deploy.yaml and service.yaml.
+        ->set namePrefix: db- and labels.pairs: tier: database
+Check if kustomize can process these
+    #kubectl kustomize mongo_kustom/base/db
+We have offloaded labels and selectors to kustomize. kustomize can also set name prefix and suffix.
+Lets do the same for mongoexpress as well.
+    #mkdir mongo_kustom/base/express
+    #vim mongo_kustom/base/express/deploy.yaml
+        ->copy contents of mongoexpress-deployment here.
+        ->remove all selector and labels. Remove namespace. Change metadata.name to deploy. Change secretKeyRef.name to secret
+    #vim mongo_kustom/base/express/service.yaml
+        ->copy contents of mongoexpress-service-lb here.
+        ->remove selector. Remove namespace. Change metadata.name to service.
+    #vim mongo_kustom/base/express/kustomization.yaml
+        ->list resources: as deploy.yaml and service.yaml.
+        ->set namePrefix: express- and labels.pairs: tier: frontend
+Check if kustomize can process these
+    #kubectl kustomize mongo_kustom/base/express
+For db and express to work, we need pass the creds of dbuser and expressuser.
+Lets setup the secret for db and express to use.
+We could reuse the mongo-secret.yaml we had created last time.
+But lets instead use secretGenerator of Kustomize.
+    #vim mongo_kustom/base/secret.key.
+        ->Enter user and pass of mongodb and express as key=value pairs
+        ->This file has been excluded using gitignore.
+    #vim mongo_kustom/base/kustomization.yaml
+        ->define secretGenerator with envs from ./secret.key. Set the secretGenerator name as secret
+configMapGenerator and secretGenerator can work with files, envs and literals
+Kustomize resources can include any yaml files and any folder containing kustomization.yaml that exits within pwd.
+    #vim mongo_kustom/base/kustomization.yaml
+        ->list resources: as paths to db and express folders.
+        ->set namePrefix: mongo- and labels.pairs: app: mongo.
+We had configmap that would pass the service_name of mongodb to mongoexpress.
+Lets use replacements funtion of Kustomize to do this.
+    #vim mongo_kustom/base/express/deploy.yaml
+        ->Update the env.name: ME_CONFIG_MONGODB_SERVER to have the value kustom-db-service.
+    #vim mongo_kustom/base/kustomization.yaml
+        ->define replacements.source as metadata.name of db-service
+        ->define replacements.target as spec.template.spec.containers.0.env.2.value of express-deploy
+Check if kustomize can process these
+    #kubectl kustomize mongo_kustom/base/
+Check the name of secret and if it is applied properly in the deployments. Also check if the replacements has worked.
+Lets apply it.
+    #kubectl apply -k mongo_kustom/base/
+    #kubectl get pod -w
+    #kubectl get all,secret
+Login to Express via browser http://localhost:8081/. Signin with expressuser and expresspass.
+Lets cleanup,
+    #kubectl delete -k mongo_kustom/base/
+Now that our base app is ready, it can be used as is and can still be used as a template.
+This is the ----CORE FEATURE---- of Kustomize.
+A working base app can be customized many times without affecting the base or other versions. 
+All versions will be another overlays folder. Each of these versions will list the base folder as a resources.
+During the Deploying MongoExpress, we had tried nodeport service. But this required us to delete/rename the lb.yaml. 
+And after we completed np testing, we had to create/rename lb.yaml and delete/rename np.yaml
+Lets use make our first version to try nodeport instead of LoadBalancer.
+We can do this with patchmerge or patchjson
+In patchStrategicMerge, we create revision.yaml that would be merged with an existing base resource.
+Merge = base.spec + revision.spec. All base.spec that matches and revision.spec are replaced with revision.spec
+    #mkdir -p mongo_kustom/overlay/nodeport/patchStrategicMerge
+The revision must have the exact kind and metadata of the base resource to be patched.
+    #vim mongo_kustom/overlay/nodeport/patchStrategicMerge/service-np.yaml
+        ->Copy contents of base/express/service into this file.
+        ->Change the name to what it would be after base/ and base/express/ kustomization.yaml has kustomized service.
+        ->Change service type to NodePort. Set the nodePort 30002.
+    #vim mongo_kustom/overlay/nodeport/patchStrategicMerge/kustomization.yaml
+        ->list resources: as path to base folder. Ensure the relative path from pwd is correct.
+        ->set patches path as serice-np.yaml
+Check if kustomize can process these
+    #kubectl kustomize mongo_kustom/overlay/nodeport/patchStrategicMerge/
+    #kubectl apply -k mongo_kustom/overlay/nodeport/patchStrategicMerge/
+    #kubectl get pod -w
+    #kubectl get all,secret
+Login to Express via browser http://localhost:30002/. Signin with expressuser and expresspass.
+Lets cleanup,
+    #kubectl delete -k mongo_kustom/overlay/nodeport/patchStrategicMerge/
+Note: While testing the build, i had used ../../../base/express as resource and service name as express-service instead of base. 
+      After testing, i got it working and updated ../../../base as resource and service name as mongo-express-service.
+In patchJson6902, we use operator to directly make revisions into base.spec.
+    #mkdir mongo_kustom/overlay/nodeport/patchJson6902
+    #vim mongo_kustom/overlay/nodeport/patchJson6902/kustomization.yaml
+        ->list resources: as relative path to base folder.
+        ->set target as mongo-express-service
+        ->replace /spec/type with NodePort
+        ->add /spec/ports/0/nodePort 30001
+Check if kustomize can process these
+    #kubectl kustomize mongo_kustom/overlay/nodeport/patchJson6902/
+    #kubectl apply -k mongo_kustom/overlay/nodeport/patchJson6902/
+    #kubectl get pod -w
+    #kubectl get all,secret
+Login to Express via browser http://localhost:30001/. Signin with expressuser and expresspass.
+Lets cleanup,
+    #kubectl delete -k mongo_kustom/overlay/nodeport/patchJson6902/
+I had thought we could perform patching with replacements funtion of Kustomize. have a look at mongo_kustom/overlay/nodeport/replacement-not-usable
+Although I was able to edit express-service, it could be done only by adding a whole new service with the revision.spec.
+We will end up with a service that is not associated with any pod and is using up the nodeport we want to use for express-service.
+Updating the image is a patching activity, but we dont need to use patchmerge or patchjson.
+    #vim mongo_kustom/imagepatch-not-used/image-kustomization.yaml
+        ->No use cases to use this file yet. Check comments to learn
+After Deploying MongoExpress we had created namespace mongo-dev.
+To implement this in mongo_k8s, we had to edit every yaml file. Let implement the same using kustomize version.
+    #mkdir mongo_kustom/overlay/dev
+    #vim mongo_kustom/overlay/dev/namespace.yaml
+        ->Set metadata.name as mongo-dev
+    #vim mongo_kustom/overlay/dev/secret.key
+        ->Use all the same keys as base/secret.yaml but with different values
+        ->This file has been excluded using gitignore.
+    #vim mongo_kustom/overlay/dev/kustomization.yaml
+        ->define secretGenerator with envs from ./secret.key, name as secret and behaviour as replace.
+        ->list resources: as relative path to base folder, and namespace.yaml.
+        ->set namePrefix: dev-, set labels.pair: env: dev, and namespace as mongo-dev
+        ->define replacement to fetch kustomized db-service name and apply in env of express-deploy
+        ->define patch on mongo-express-service to use a port 8082
+behaviour options for secretGenerator and configMapGenerator are create(default), replace and merge.
+We have added a new label env: dev that will be a new one to all resources.
+If you had reused and label.key, then the value set in kustomization.yaml will overwrite the previously set values.
+If you dont use namePrefix or nameSuffix, you dont need the replacement block. The replacement defined in base will suffice.
+Check if kustomize can process these
+    #kubectl kustomize mongo_kustom/overlay/dev/
+Check the name of secret and if it is applied properly in the deployments. Also check if the replacements has worked.
+Lets apply it.
+    #kubectl apply -k mongo_kustom/overlay/dev/
+    #kubectl get pod -w -n mongo-dev
+    #kubectl get all,secret -n mongo-dev
+Login to Express via browser http://localhost:8082/. Signin with new creds of expressuser and expresspass.
+Now we are able run mongo/base app in default ns at http://localhost:8081/ along with mong-dev ns
+Lets cleanup,
+    #kubectl delete -k mongo_kustom/overlay/dev/
+
+Helm
+Helm is a package manager for kubernetes apps.
+    #helm version
+If you see error, you will need to install it. Use winget to install on windows
+    #winget search helm
+    #winget install Helm.Helm
+You will need to close an open all cmd and bash session after install is complete.
+    #helm version
+Helm chart is a bundle of yaml files that can deploy all componenets of an application in kubernetes.
+Just as  https://hub.docker.com/search is the public repo for container images,
+https://artifacthub.io/packages/search is the public repo for helm charts.
+    #helm repo add <repo_name> <repo_url>
+    #helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
+    #helm repo add bitnami https://charts.bitnami.com/bitnami
+    #helm repo list
+    #helm repo update
+    #helm search repo <repo_name>
+    #helm search repo bitnami
+    #helm search repo kubernetes-dashboard
+    #helm search hub <app_name>
+    #helm search hub wordpress
+Any chart that you pull or install will contain the yaml files for deployment, service, configmap, and every other k8s resource needed to run the application.
+Another feature of a helm chart is that all its k8s resource yaml files are templates. They are all within the templates folder of the chart.
+If the value of any property in any template file can change, it is set as a variable.
+The values.yaml at the root dir of the chart contains the default values of all template variables. 
+Lets understand this using https://artifacthub.io/packages/helm/k8s-dashboard/kubernetes-dashboard/. No installation for now
+    #helm show chart kubernetes-dashboard/kubernetes-dashboard
+    #mkdir kubernetes_dashboard
+    #helm pull <repo_name>/<chart_name>
+    #helm pull kubernetes-dashboard/kubernetes-dashboard -d kubernetes_dashboard/ --untar
+Browse templates that make up the kubernetes-dashboard app
+    #ll kubernetes_dashboard/kubernetes-dashboard/templates
+    #less kubernetes_dashboard/kubernetes-dashboard/templates/<some_folder>/<some_file>.yaml
+You will see many variables called by {{ .Values.property.property }}
+The values of these variables can be found in values.yaml in the root dir of the chart. 
+    #helm show values kubernetes-dashboard
+    #less kubernetes_dashboard/kubernetes-dashboard/values.yaml
+All customisation across all charts allowed by the author are in the above values.yaml.
+If you want to fetch only the values.yaml and not the whole chart,
+    #helm show values kubernetes-dashboard/kubernetes-dashboard > kubernetes_dashboard/kubernetes-dashboard-helm-values.yaml
+    #diff kubernetes_dashboard/kubernetes-dashboard-helm-values.yaml kubernetes_dashboard/kubernetes-dashboard/values.yaml
+To see the actual yaml files that get applied to cluster.
+    #helm template <release_name> <repo_name>/<chart_name>
+    #helm template myapp-v1-local pulled_chart.tar.gz
+    #helm template myapp-v1-local /path/to/pulled_chart
+    #helm template --debug --dry-run kubernetes-dashboard ./kubernetes_dashboard/kubernetes-dashboard/ | less
+A Helm chart can also be made up of other charts. These subcharts also follow the same structure as our main chart 
+    #ll kubernetes_dashboard/kubernetes-dashboard/charts
+    #ll kubernetes_dashboard/kubernetes-dashboard/charts/<chart_name>/templates/
+The metadata (version, authors, description) are in Chart.yaml
+    #less kubernetes_dashboard/kubernetes-dashboard/Charts.yaml
+You can customize the chart with your custom_values.yaml. You only need to set those that you want to change. The rest would be default from values.yaml.
+Once you are done exploring, lets cleanup
+    #rm -f kubernetes_dashboard/kubernetes-dashboard-helm-values.yaml
+    #rm -rf kubernetes_dashboard/kubernetes-dashboard/
+Below commands will help when you are developing a helm chart.
+    #helm create myapp
+        ->This will create an nginx chart within ./myapp. Use these files to create a boilerplate chart.
+        ->consider using helm hooks and helm tests while developing.
+    #helm lint myapp
+        ->After development of app, check if there are errors.
+    #helm install myapp-v1-local ./myapp --debug --dry-run
+        ->Install can be done 5 different way, this is only one way
+    #helm upgrade myapp-v1-local ./myapp
+        ->After making changes to the local chart, use this to see the changes.
+    #helm rollback myapp-v1-local <revision_number>
+        ->If the changes are not acceptable, undo the upgrade with an older revision.
+        ->NOTE : Rollback will increment the revision_number just as an upgrade would.
+    #helm uninstall chart
+        ->Uninstall or delete a live running helm app.
+    #helm package my-app
+        ->after developing and testing the helm chart, this command will tar it
+    #helm repo index ./myapp
+        ->if multiple helm packages are there in project folder, this will create an index.yaml about all packages.
+    #helmfile sync
+        ->Install helmfile from https://github.com/helmfile/helmfile. Download a release and move it to /usr/local/bin/
+        ->Create a helmfile.yaml(not within any project or chart). List one or more charts that you need to install.
+        ->Install helm-git as a helm plugin to use git repos as helm repos
+
+Kubernetes Dashboard
+This a gui to interact with kubernetes api-server
+Kubernetes Dashboard allows you to manage your cluster from a webpage.
+Add the helm repo of Kubernetes Dashboard
+    #helm repo add kubernetes-dashboard https://kubernetes.github.io/dashboard/
+    #helm repo list
+Following best practices, lets install the dashboard in its own namespace. 
+    #helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --create-namespace --namespace kubernetes-dashboard
+    #helm list
+If you want to deploy within default namespace skip the flags --create-namespace and --namespace
+Check status
+    #helm status kubernetes-dashboard
+    #kubectl get all -n kubernetes-dashboard
+To access the dashboard,
+    #kubectl port-forward svc/kubernetes-dashboard-kong-proxy 8443:443 -n kubernetes-dashboard
+On browser, open https://localhost:8443/.
+Dashboard requires a token to Signin and access. Let set that up.
+Token of a service account is required. Check the available service account.
+    #kubectl get serviceaccount -n kubernetes-dashboard
+    #kubectl get sa -n kubernetes-dashboard
+Every namespace will have a default service account. Any deployment/replicaset/pod that is not assigned a custom sa, gets default.
+Lets create a token of default service account and use it to Login to dashboard
+    #kubectl create token default -n kubernetes-dashboard
+    #kubectl port-forward svc/kubernetes-dashboard-kong-proxy 8443:443 -n kubernetes-dashboard
+On browser, open https://localhost:8443/ and paste the token.
+You can login with a token of any account. But the things you can do and view are limited to what rolebindings have be applied to the sa.
+To use all features of the dashboard, we should login as a user that has the all permissions/privilages/roles of the k8s_cluster admin.
+Lets create a service account. 
+    #touch kubernetes_dashboard/dashboard-serviceaccount.yaml
+        ->set sa_name and ns
+    #kubectl apply -f kubernetes_dashboard/dashboard-serviceaccount.yaml
+    #kubectl get sa -n kubernetes-dashboard
+Check the available roles
+    #kubectl get clusterrole
+    #kubectl get clusterrole cluster-admin -o yaml
+    #kubectl describe clusterrole cluster-admin
+Lets bind this role to dashboard-admin sa
+    #touch kubernetes_dashboard/dashboard-clusterrolebinding.yaml
+        ->set binding_name. Map the 'cluster-admin' ClusterRole to the sa 'dashboard-admin' of ns 'kubernetes-dashboard'.
+    #kubectl apply -f kubernetes_dashboard/dashboard-clusterrolebinding.yaml
+    #kubectl get clusterrolebindings | grep -i admin
+    #kubectl describe clusterrolebindings dashboard-admin
+Now lets create token of dashboard-admin and use it to Login to dashboard
+    #kubectl create token dashboard-admin -n kubernetes-dashboard
+    #kubectl port-forward svc/kubernetes-dashboard-kong-proxy 8443:443 -n kubernetes-dashboard
+On browser, open https://localhost:8443/ and paste the token. Now all features should be available.
+To access the dashboard with an FQDN, we need to enable the ingress-nginx subchart that was bundled with kubernetes-dashboard.
+    #mkdir kubernetes_dashboard/helm_tuning
+    #touch kubernetes_dashboard/helm_tuning/dashboard_with_ingress.yaml
+        ->enable app: ingress: and specify FQDN. enable nginx: and set service: type: LoadBalancer
+Also create DNS record for your FQDN. On Windows add this line to the bottom of the file.
+    #vim /c/Windows/System32/Drivers/etc/hosts
+        ->localhost dashboard.com
+Now lets redeploy kubernetes-dashboard with the our custome values.yaml.
+    #helm upgrade kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard -f kubernetes_dashboard/helm_tuning/dashboard_with_ingress.yaml -n kubernetes-dashboard
+On browser, open https://dashboard.com/. You will see a security/privacy warning as ingress applied a dummy ssl which doesnt match our FQDN.
+Ignore it for now and click proceed. Login with the token dashboard-admin.
+Explore clusterrole, clusterrolebindings, serviceaccount, ingress across all namespaces with the get command and describe command.
+This would also be a good moment to learn which of the above are scoped by namespaces
+    #kubectl api-resources --namespaced=true  | grep -e role -e account -e ingress
+    #kubectl api-resources --namespaced=false | grep -e role -e account -e ingress
+After we are done playing around, lets Cleanup
+    #kubectl delete -f kubernetes_dashboard/dashboard-serviceaccount.yaml
+    #kubectl delete -f kubernetes_dashboard/dashboard-clusterrolebinding.yaml
+    #helm uninstall kubernetes-dashboard -n kubernetes-dashboard
+    #helm list -A
+    #kubectl delete ns kubernetes-dashboard
+
+Kubernetes Metrics Server
+    #kubectl top nodes
+    #kubectl top pods -A
+For these commands to work, we need a metrics-server running in our cluster.
+Metrics-server is also a prerequisite for HPA and VPA to work.
+    #helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+    #helm upgrade --install metrics-server metrics-server/metrics-server -n kubernetes-metrics --create-namespace
+DockerDesktop doesnt meet the https://github.com/kubernetes-sigs/metrics-server#requirements
+We need to add the arg --kubelet-insecure-tls in metrics-server deployment
+    #kubectl edit deploy metrics-server
+        ->spec.containers.args : --kubelet-insecure-tls
+Another way is to apply the arg during the install/upgrade.
+    #helm upgrade --install metrics-server metrics-server/metrics-server -f ./metrics_server/k8-sigs-metrics-server.yaml -n kubernetes-metrics --create-namespace
+Metrics Server is present in the bitnami repo as well.
+    #helm upgrade --install metrics-server bitnami/metrics-server -f ./metrics_server/bitnami-metrics-server.yaml -n kubernetes-metrics --create-namespace
+Deploying metrics server allows the 
+    #kubectl top pods -A
+    #kubectl top nodes
+The data from the metrics-server can be observed from the kubernetes-dashboard as well.
+Lets Cleanup,
+    #helm uninstall metrics-server -n kubernetes-metrics
+    #helm list -A
+    #kubectl delete ns kubernetes-metrics
+
+Ingress
+Ingress will handle http/https requests meant for an FQDN. Ingress also handles SSL offloading
+Path based routing rules can be defined to forward requests to multiple internal(ClusterIP) services.
+Ingress controller is not available on cluster by default. It has to be installed before applying ingress.yaml
+If you have a minikube cluster,
+    #minikube addons enable ingress
+    #kubectl get all -o wide -n kube-system | grep -i nginx-ingress-controller
+On DockerDesktop, helm chart is the prefered method
+    #helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx/
+    #helm repo list
+    #helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace
+    #helm list
+    #helm status ingress-nginx
+Lets create ingress for mongo_k8s and kubernetes_dashboard in their own namespaces.
+    #touch kubernetes_dashboard/dashboard-ingress.yaml
+        ->Open in VScode. Type "ingress" and then TAB key to autocomplete the k8s config.
+        ->Set name and ns. Set some FQDN as host. The service_name and service_port that serves the ui must be set as backend: service:
+    #touch mongo_k8s/mongoexpress-ingress.yaml
+        ->Set name and ns. Set some FQDN as host. The service_name and service_port that serves the ui must be set as backend: service:
+Now lets run kubernetes_dashboard and mongo_k8s
+    #helm upgrade --install kubernetes-dashboard kubernetes-dashboard/kubernetes-dashboard --create-namespace --namespace kubernetes-dashboard
+    #kubectl apply -f kubernetes_dashboard/
+    #kubectl apply -f mongo_k8s/
+Check the status of ingress in both namespaces
+    #kubectl get ingress -n kubernetes-dashboard
+    #kubectl describe ing -n mongo-dev
+You will notice that IP address has not been assigned to both ingress.
+Lets Troubleshoot. Check the logs on ingress controller
+    #kubectl get all -n ingress-nginx
+    #kubectl describe deploy <deploy_name> -n ingress-nginx
+    #kubectl describe pod <pod_name> -n ingress-nginx
+    #kubectl logs --tail=20 <pod_name> -n ingress-nginx
+The logs says "ignoring ingress... ingress does not contain a valid IngressClass"
+    #kubectl api-resources --namespaced=true  | grep class
+    #kubectl api-resources --namespaced=false | grep class
+    #kubectl get ingressclass
+Lets add this item both ingress.yaml files to resolve the error
+    #vim kubernetes_dashboard/dashboard-ingress.yaml
+        ->spec: ingressClassName: nginx
+    #vim mongo_k8s/mongoexpress-ingress.yaml
+        ->spec: ingressClassName: nginx
+    #kubectl apply -f kubernetes_dashboard/dashboard-ingress.yaml
+    #kubectl apply -f mongo_k8s/mongoexpress-ingress.yaml
+Check logs if this fixed the error
+    #kubectl logs --tail=10 -f <pod_name> -n ingress-nginx
+You should see "successfully validated configuration... creating ingress... backend reload required... Backend successfully reloaded"
+Check ingress if IP address shows up. It may take 1/2 minutes.
+    #kubectl describe ing -n kubernetes-dashboard
+    #kubectl get ing -n mongo-dev
+The FQDN that was set both is ingress files does not exist or does not have DNS record. You should create it.
+On Windows, open new bash/cmd and new DNS records at the bottom of the file.
+    #vim /c/Windows/System32/Drivers/etc/hosts
+        -><dashboard.ingress.ip.addr> dashboard.com
+        ->localhost mongo.com
+If dashboard.com was already listed, overwrite it if the IP address is different.
+On Linux add these 2 records at the bottom of /etc/hosts file.
+On browser, try http://mongo.com/ and https://mongo.com/. You should be able to sign in with the credentials defined in mongo_k8s/mongo-secret.yaml.
+When using https, you will see "Warning: Security risk". This can be fixed once you buy SSL and apply it. For now, we ignore/accept risk and proceed.
+When we try http://dashboard.com/ and https://dashboard.com/. We see the error "400 Bad Request...The plain HTTP request was sent to HTTPS port"
+This is because the service/kubernetes-dashboard-kong-proxy by default only accepts only https requests.
+Lets configure the dashboard ingress to forward to use https for backend traffic.
+    #vim kubernetes_dashboard/dashboard-ingress.yaml
+        ->metadata: annotations: nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+This was accounted for when dashboard was deployed with its ingress subchart.
+We can also force all incoming ingress traffic as https using annotations.
+    #vim kubernetes_dashboard/dashboard-ingress.yaml
+        ->metadata: annotations: nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    #vim mongo_k8s/mongoexpress-ingress.yaml
+        ->metadata: annotations: nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    #kubectl apply -f kubernetes_dashboard/dashboard-ingress.yaml
+    #kubectl apply -f mongo_k8s/mongoexpress-ingress.yaml
+On browser, https://mongo.com/ and https://dashboard.com/ should work (ignore the Warning about SSL mismatch). 
+Try url with http, you will see the redirection
+Improve :   ->Setup ingress with wildcard ssl using certbot. kubernetes can hold cert and key in secret.yaml
+            ->Setup multi-host-ingress.yaml in ns=ingress-nginx. <service_name>.<namespace>.svc.clustername is the DNS format for accessing services outside the ns 
+            ->You will also need endpointslice service externalname service yaml files in ns=ingress-nginx pointing to mongo and dashboard.
+            ->Setup default backend
+Lets cleanup, 
+    #kubectl delete -f mongo_k8s/mongo-namespace.yaml
+    #helm uninstall kubernetes-dashboard -n kubernetes-dashboard
+    #kubectl delete ns kubernetes-dashboard
+    #helm uninstall ingress-nginx -n ingress-nginx
+    #helm list
+    #kubectl delete ns ingress-nginx
+

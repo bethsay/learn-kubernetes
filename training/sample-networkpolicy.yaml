@@ -1,0 +1,41 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sample-networkpolicy
+  namespace: default
+spec:
+  podSelector:                    #Applies to all pods that matchlabel.
+    matchLabels:                  #If podSelector is empty, it applies to all pods in the namespace.
+      role: db
+  policyTypes:                    #Use this when you want to disable ingress block or egress block. Optional.
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 172.17.0.0/16
+        except:
+        - 172.17.1.0/24
+    - namespaceSelector:          #All pods in the namespace
+        matchLabels:
+          project: myproject
+    - podSelector:                #Pods in the same namespace as the NetworkPolicy.
+        matchLabels:
+          role: frontend
+    - namespaceSelector:          #only pods in the namespace that have label
+        matchLabels:
+          project: myproject
+      podSelector:
+        matchLabels:
+          role: frontend
+    ports:                        #Listening ports of podSelector.
+    - protocol: TCP
+      port: 6379
+      endport: 6399
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/24
+    ports:                        #Target parts of output traffic from podSelector.
+    - protocol: TCP
+      port: 5978

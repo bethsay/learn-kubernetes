@@ -1,0 +1,8 @@
+namePrefix: db-
+labels:
+  - pairs:
+      tier: database
+    includeSelectors: true 
+resources:
+  - deploy.yaml
+  - service.yaml

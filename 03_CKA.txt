@@ -1,0 +1,1046 @@
+Kubernetes ecosystem
+Vanilla : Using kubeadm you can build your own cluster using VMs or host machines. 
+          This setup will only have the core funtionality. This can be extended by using any from https://www.cncf.io/projects/
+Cloud Distribution   : EKS, AKS, GKE. These will have additional funtionality dependent offered by respective cloud services.
+OnPrem Distribution  : Openshift, Rancher, Anthos, Charmed
+Minimal Distribution : Minikube, k3s
+
+Kubernetes cluster is made up nodes that belong to a Control Plane or Worker Plane.
+Nodes are the machines that responsible for running pods.
+Every Nodes of Worker plane will have a cri, kubelet, kube-proxy.
+    cri aka container runtime interface is required to pull images and run containers within pods. containerd or CRI-O may be used.
+    kubelet deploys pods, manages its resource allocation and operates the CRE within a single node
+    kube-proxy manages all traffic across all nodes. kube-proxy deals with the service config.
+Every Node of Control plane will have cri, kubelet, kube-proxy, api-server, scheduler, controller manager, etcd, and the add-ons (coreDNS).
+        #kubectl get all -o wide -n kube-system
+    api-server is what the admin and users interact using kubectl or other methods. Requests are validated, written to etcd and passed to scheduler.
+    scheduler selects the node that should create new pods and triggers the its kublet to run pod and CRI. Selection is made based available system resources of all nodes.
+    controller-manager polls current state of pods acrosss all nodes. If any deviate from desired state as per etcd data, scheduler is informed to fix it.
+    controller-manager also operates the selector in any resource to find all possible target resources by matching labels and are then set as endpoints.
+    etcd holds all data records of every resource metric from all pods and all nodes and makes it available to api-server, scheduler, controller
+    coreDNS records are updated with the IP and FQDN of every k8s resource that get created. 
+    kubeDNS is the service of coreDNS and listens on port 53. dig and nslookup requests are served by kubeDNS as it is the nameserver in /etc/resolv.conf of everypod.
+
+kubectx, kubens, kube-ps1, k9s, popeye, stern are other clients available to interact with api-server
+
+On a Vanilla setup, the cri, kubelet, kubectl and kubeadm must be installed on every node.
+    #sysctl net.ipv4.ip_forward
+        ->must be 1 (ie enabled). If not, enable it
+        #echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.d/k8s.conf
+        #sysctl --system | grep ipv4
+        ->Verify if enabled
+    #free -h
+        ->Ensure swap is 0. If not, remove and disable it
+        #swapoff -a
+        #vim etc/fstab
+            ->Comment the line about swap
+        #Verify if swap is 0
+    #stat -fc %T /sys/fs/cgroup/
+        ->cgroup2fs
+cri = containerd https://github.com/containerd/containerd/blob/main/docs/getting-started.md
+Installation option 2 is the easy option, but https://download.docker.com/linux/ is is many versions lagging the main release. 
+Option 1 : Manual Install
+    #wget https://github.com/containerd/containerd/releases/download/<VERSION>/containerd-<VERSION>-<OS>-<ARCH>.tar.gz
+        ->Find the version you want from https://github.com/containerd/containerd/tags
+    #tar -xzvf containerd-<VERSION>-<OS>-<ARCH>.tar.gz -C /usr/local 
+    #wget https://github.com/opencontainers/runc/releases/download/<VERSION>/runc.amd64
+        ->Find the version you want from https://github.com/opencontainers/runc/tags
+    #install -m 755 runc.amd64 /usr/local/sbin/runc
+    #wget https://github.com/containernetworking/plugins/releases/download/<VERSION>/cni-plugins-<OS>-<ARCH>-<VERSION>.tgz
+        ->Find the version you want from https://github.com/containernetworking/plugins/tags
+    #mkdir -p /opt/cni/bin
+    #tar -xzvf cni-plugins-<OS>-<ARCH>-<VERSION>.tgz -C /opt/cni/bin
+    #wget https://raw.githubusercontent.com/containerd/containerd/main/containerd.service -O /usr/local/lib/systemd/system/containerd.service
+    #systemctl daemon-reload
+    #systemctl enable --now containerd
+    #systemctl status containerd
+Option 2 : Install using package manager
+    #apt install containerd
+    #systemctl status containerd
+After installation of containerd apply the below config
+    #mkdir /etc/containerd/; containerd config default > /etc/containerd/config.toml
+    #vim /etc/containerd/config.toml
+        ->[plugins."io.containerd.grpc.v1.cri"]
+        ->sandbox_image = "registry.k8s.io/pause:3.10"
+        ->[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+        ->runtime_type = "io.containerd.runc.v2"
+        ->[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+        ->SystemdCgroup = true
+    #ls -lh /var/run/containerd/containerd.sock /run/containerd/containerd.sock
+    #containerd --version
+    #ctr version
+    #runc --version
+kubelet, kubectl and kubeadm = https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/install-kubeadm/#installing-kubeadm-kubelet-and-kubectl
+You will need to perfom cluster upgrade, So opt for 2 minor versions lesser than the latest. 
+Follow the steps in the link to ensure repo has been added in /etc/apt/sources.list.d/ and /etc/yum.repos.d/
+Check firewalld status, SELinux status. Ports 6443, 2379, 2380, 10250-10260, 32000-32767 must be available.You may need to check firewall rules as well
+For Ubuntu
+    #apt update
+    #apt install -y apt-transport-https ca-certificates curl gpg
+    #curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.33/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    #echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.33/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+    #apt update
+    #apt-cache policy kubelet kubeadm kubectl
+    #apt install -y kubelet kubeadm kubectl
+        ->Install the latest version. To install an older version, use below command
+        #apt install -y kubelet=1.33.0-1.1 kubeadm=1.33.0-1.1 kubectl=1.33.0-1.1
+    #apt-mark hold kubelet kubeadm kubectl
+        ->To prevent unscheduled upgrades of the packages kubelet, kubeadm and kubectl
+For RHEL
+    #setenforce 0
+    #sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
+    #vim /etc/yum.repos.d/kubernetes.repo
+        ->[kubernetes]
+        ->name=Kubernetes
+        ->baseurl=https://pkgs.k8s.io/core:/stable:/v1.33/rpm/
+        ->enabled=1
+        ->gpgcheck=1
+        ->gpgkey=https://pkgs.k8s.io/core:/stable:/v1.33/rpm/repodata/repomd.xml.key
+        ->exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
+    #yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
+        ->The packages are excluded. The exclusion must be disabled to allow installation
+For Both
+    #systemctl enable --now kubelet
+    #systemctl status kubelet
+    #journalctl -xe
+    #journalctl -f -u kubelet
+        ->Use this for troubleshooting
+    #mkdir ~/.kube
+bash_completion for linux commands can be enabled for a user or system.
+Here, we set kubeadm completion at user level and kubectl completion at system level
+    #kubeadm completion -h
+    #kubeadm completion bash > ~/.kube/kubeadm_completion.bash.inc
+    #printf "\n# Kubeadm shell completion\nsource '$HOME/.kube/kubeadm_completion.bash.inc'\n" >> $HOME/.bashrc
+    #source $HOME/.bash_profile
+    #kubectl completion -h
+    #source < (kubectl completion bash)
+    #kubectl completion bash > /etc/bash_completion.d/kubectl
+
+-----DO NOT run kubeadm init more than once-----
+Option 1 : For HA cluster setup (Many control node, Many worker node)
+    For a HA cluster setup, you need the 3 prerequisite listed below.
+        ->DNS name    : Create a DNS record that points your DNS name to the IP os a Live LoadBalancer.
+        ->External LB : The external LB must itself be a multinode HA setup.
+        ->Virtual IP  : The VIP must be configured to be attached to the primary LB node.
+    If the external LB and VIP are not available yet, a kube-vip static pod will work as a stop gap. https://kube-vip.io/docs/installation/static/
+    Map the DNS name to the control node IP for now. ssh into the primary control node (eg: 192.168.0.200) and run
+        #echo "192.168.0.200 dev.kubernetes.company.com" >> /etc/hosts
+    Create same DNS record in /etc/hosts in all other nodes as well.
+    In the primary control node, set the below variables to create a kube-vip static pod.
+        #export VIP=192.168.0.200
+        #export INTERFACE=eth0
+            ->This is the interface name to which the node ip addr is attached to. You can find out with
+            #ip a; ifconfig
+        #export KVVERSION=v1.0.0
+            ->Pick the version tag from https://github.com/kube-vip/kube-vip/releases
+            ->Without using the browser, you can fetch the latest version tag. You will need curl and jq installed
+            #KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
+        #alias kube-vip="ctr image pull ghcr.io/kube-vip/kube-vip:$KVVERSION; ctr run --rm --net-host ghcr.io/kube-vip/kube-vip:$KVVERSION vip /kube-vip"
+        #kube-vip manifest pod --interface $INTERFACE --address $VIP --controlplane --services --arp --leaderElection | tee /etc/kubernetes/manifests/kube-vip.yaml
+    Initialize the k8s-cluster
+        #kubeadm init --control-plane-endpoint dev.kubernetes.company.com --apiserver-advertise-address 192.168.0.200 --upload-certs
+Option 2 : For stand-alone setup (One control node, Many worker node)
+    For a stand-alone cluster with single Control Plane node, ssh into it and run,
+        #kubeadm init
+After the kubeadm init completes, the stdout contains steps to configure kubectl as cluster-admin and add worker nodes.
+Copy it for later use. If the token gets expired when you run the command, it can be regenerated. 
+
+kubeadm init will cycle through all the below phases and setup a fully working control plane
+    ->preflight     : Checks if prerequisite are present. Download the container images for kube-system
+    ->certs         : Generate self-signed Kubernetes CA and use it to create certs to be used in api-server, etcd, and proxies
+    ->kubeconfig    : Create configuration files for the cluster
+    ->etcd          : Create manifest file for the etcd pod
+    ->control-plane : Create manifest files for the pods of api-server, controller-manager and scheduler
+    ->kublet-start  : update kubelet config start/restart the kubelet service/process in current node.
+    ->upload-config : Generate ConfigMap for cluster configuration and kubelet configuration
+    ->upload-certs  : upload all certs to /etc/kubernetes/pki
+    ->mark-control-plane : mark the node as control plane. This blocks other workloads from running on this node.
+    ->bootstrap-token    : generate token for other systems to join the cluster as worker node or control node
+    ->kublet-final  : update kubelet config so that it is managed by scheduler pod
+    ->add-on        : install coreDNS and kube-proxy controllers
+
+Lets setup kubectl config. Steps for this would be in the stdout of kubeadm init.
+    #mkdir $HOME/.kube
+    #cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+    #chown $(id -u):$(id -g) $HOME/.kube/config
+    #kubectl get nodes
+        ->status will be NotReady as pod network add-on needs to be installed
+    #kubectl get all -A
+        ->coreDNS will be Pending untill pod network add-on comes online
+
+The network add-on also need to be setup. coreDNS Pod remain in Pending state until add-on is installed
+kubeadm init skipped this to avoid endorsing any provider.
+Lets select cilium as our cni add-on (Container Network Interface). 
+    Cilium seems to be causing DNS lookup failure on the control node. ping and apt commands are failing
+Lets install Helm
+Option 1 : Manual Install
+    #HELM_VERSION=$(curl -Ls https://get.helm.sh/helm-latest-version)
+    #wget https://get.helm.sh/helm-$HELM_VERSION-linux-amd64.tar.gz
+    #tar -xvzf helm-$HELM_VERSION-linux-amd64.tar.gz
+    #cp linux-amd64/helm /usr/local/bin/helm
+    #helm version
+    #source < (helm completion bash)
+    #helm completion bash > /etc/bash_completion.d/helm
+Option 2 : Install using package manager
+    #curl -fsSL https://baltocdn.com/helm/signing.asc | gpg --dearmor -o /etc/apt/keyrings/helm.gpg
+    #echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | tee /etc/apt/sources.list.d/helm-stable-debian.list
+    #apt update
+    #apt install helm
+    #helm version
+Lets fetch the cilium helm chart and install it. https://docs.cilium.io/en/stable/installation/k8s-install-kubeadm/
+    #helm repo add cilium https://helm.cilium.io/
+    #helm repo list
+    #helm repo update
+    #helm install cilium cilium/cilium --version 1.18.0 --namespace kube-system
+        ->Use --version as cilium includes rc, pre, snap as public releases .
+    #CILIUMCLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+    #wget https://github.com/cilium/cilium-cli/releases/download/$CILIUMCLI_VERSION/cilium-linux-amd64.tar.gz
+    #tar -xzvf cilium-linux-amd64.tar.gz -C /usr/local/bin
+    #cilium status --wait
+    #cilium connectivity test
+    #kubectl get nodes
+    #kubectl get all -A
+If the test might fail or not start. Also node status may be NotReady. Also coreDNS will be Pending. Rebooting all nodes would fix this.
+    #reboot
+    #cilium status --wait
+    #cilium connectivity test
+    #kubectl get nodes
+    #kubectl get all -A
+We have deployed cilium add-on to manage pod network. Cilium has capability to manage the cluster network as well.
+Later, when creating another clusterIf you want to replace kube-proxy, refer https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/#kubeproxy-free
+
+Join Worker node
+The init command will show the join command that can add worker nodes to cluster.
+Ensure DNS resolution of cluster DNS name is working from all worker nodes.
+    #ping dev.kubernetes.company.com
+    #dig dev.kubernetes.company.com
+If ping and dig fails, then the join command will fail on nodes. Fix it by updating /etc/hosts on all nodes with lookup failure on all nodes with lookup failure.
+    #echo "192.168.0.200 dev.kubernetes.company.com" >> /etc/hosts
+Worker nodes can be added with
+    #kubeadm join dev.kubernetes.company.com:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>
+For a stand-alone cluster the worker join command will have IP of the control node in place of dns name
+If the token, has expired or is lost, you may recreate them with
+    #kubeadm token list
+    #kubeadm token create --print-join-command
+On the control node to check if the nodes have joined and are healthy
+    #kubectl get nodes -w
+If any node doesnt join or is NotReady, ssh into it and troubleshoot
+    #journalctl -xefu kubelet
+
+Join Control nodes ---For HA setup only. Skip in case of stand-alone setup---
+If the 3 prerequisite are not external, you can use kube-vip to satisfy them. https://github.com/kubernetes/kubeadm/blob/main/docs/ha-considerations.md#kube-vip
+Other suggetions for making Kubernetes HA is published in github, as these are external factors.
+Look-out for official Helm chart for kube-vip https://kube-vip.io/docs/installation/ https://artifacthub.io/packages/helm/kube-vip/kube-vip
+kube-vip will manage one or more virtual IPs. When more than one VIPs are to be managed, select one to represent control-plane.
+kube-vip will also run as a LoadBalancer for the control-plane. To make it HA as well, we need to run it on all control-plane nodes.
+You can either repeat the initial steps of creating a static pod on all control-plane nodes. OR use the below steps to deploy a DaemonSet.
+ssh into the primary control-plane node. From the Cloud/Hosting provider, get an IP that you can use as a VIP, preferably with the same IP range as all k8s node.
+    #export VIP=192.168.0.10
+    #export INTERFACE=eth0
+        ->This is the interface name to which the node ip addr is attached to. You can find out with
+        #ip a; ipconfig
+Lets generate the manifest of the kube-vip daemonset.
+    #kubectl apply -f https://kube-vip.io/manifests/rbac.yaml
+        ->Creates sa with clusterrole and clusterrolebinding to be used by kube-vip daemonset
+    #export KVVERSION=v1.0.0
+        ->Without using the browser, you can fetch the latest version tag. You will need curl and jq installed
+        #KVVERSION=$(curl -sL https://api.github.com/repos/kube-vip/kube-vip/releases | jq -r ".[0].name")
+        ->Else pick the version tag from https://github.com/kube-vip/kube-vip/releases
+    #alias kube-vip="ctr image pull ghcr.io/kube-vip/kube-vip:$KVVERSION; ctr run --rm --net-host ghcr.io/kube-vip/kube-vip:$KVVERSION vip /kube-vip"
+    #kube-vip manifest daemonset --interface $INTERFACE --address $VIP --inCluster --taint --controlplane --services --arp --leaderElection
+        ->The contents should look like this https://kube-vip.io/docs/installation/daemonset/#example-arp-manifest
+    #kubectl get ds,pods -n kube-system -w
+        ->Check if the pods are Running. Troubleshoot for any other status
+Ensure DNS resolution of cluster DNS name is working from all control-plane nodes.
+    #ping dev.kubernetes.company.com
+    #dig dev.kubernetes.company.com
+If ping and dig fails, then the join command will fail on nodes. Fix it by updating /etc/hosts on all nodes with lookup failure on all nodes with lookup failure.
+    #echo "192.168.0.10 dev.kubernetes.company.com" >> /etc/hosts
+Control node can be added with
+    #kubeadm join dev.kubernetes.company.com:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash> --control-plane --certificate-key <encoded_cert_key>
+On the control node to check if the nodes have joined and are healthy
+    #kubectl get nodes -w
+If the token, cert-hash or cert-key has expired or is lost, you may recreate them with
+    #kubeadm token list
+    #kubeadm token create --print-join-command
+    #kubeadm init phase upload-certs --upload-certs
+If any node doesnt join or is NotReady, ssh into it and troubleshoot
+    #journalctl -xefu kubelet
+
+If you find a fault in the cluster setup and you need to recreate the cluster,
+    #kubeadm reset
+Then you can redo the setup sequence starting from from kubeadm.
+
+kube-vip-cloud-controller --Optional--
+For LB services deployed in the cluster, external IPs are required. An external LB would provide its IP for LB services.
+kube-vip-cloud-controller can also provide external IPs when external LB isnt available. This requires at least one VIP.
+Edit the configmap block with you allocated virtual IPs in ./training/kube-vip-cloud-controller.yaml
+    #kubectl apply -f ./training/kube-vip-cloud-controller.yaml
+This kube-vip-cloud-provider might be outdated, so, you may deploy it from the original URL.
+    #kubectl apply -f https://raw.githubusercontent.com/kube-vip/kube-vip-cloud-provider/main/manifest/kube-vip-cloud-controller.yaml
+    #kubectl create configmap --namespace kube-system kubevip --from-literal cidr-global=192.168.0.220/29 --from-literal allow-share-global="true"
+        ->cidr-global is one of the many ways to provide kube-vip-cloud-controller with virtual IPs.
+        ->See More: https://github.com/kube-vip/kube-vip-cloud-provider?tab=readme-ov-file#global-and-namespace-pools
+    #kubectl get all -n kube-system --selector app=kube-vip
+Now if you deploy any LB service in your cluster, kube-vip-cloud-provider will assign external IP to it.
+
+StorageClass
+IngressClass
+Metrics-server
+
+DaemonSet
+Used for running agents. DaemonSet will create pods on every node.
+    #kubectl get ds -A --show-labels
+    #kubectl get all -A --selector=k8s-app=kube-proxy
+The control plane nodes have taints to block resources owned by users from running on it.
+Admins can override this in their daemonset with container.tolerations
+
+NFS as StorageClass via in-tree driver
+StorageClass can dynamically create pv to bind to new pvc. Storageclass requires a storage provisioner.
+There are about 6 storage provisioners. DockerDesktop and minikube use local path as storage provisioner.
+Lets deploy an NFS as storageclass. https://kubernetes.io/docs/concepts/storage/storage-classes/#nfs
+If you dont have an external NFS, lets use the 192.168.0.200 as a nfs server 
+    #apt install nfs-kernal-server nfs-common 
+    #mkdir /mnt/nfs-server
+    #chown nobody:nogroup /mnt/nfs-server
+    #vim /etc/exports
+        ->/mnt/nfs-server <node.ip.addr>/<subnetmask>(rw,sync,no_subtree_check,root_squash)
+    #exportfs -rav
+    #systemctl restart nfs-kernel-server
+    #showmount -e
+Once you have a running NFS server, install the nfs client on all k8s cluster nodes and lookup nfs-server
+    #apt install nfs-common
+    #showmount -e <nfs.ip.addr>
+Using helm, we can install NFS provisioner, storageclass, and rbac. Refer https://github.com/kubernetes-sigs/nfs-subdir-external-provisioner
+    #helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+    #helm install  nfs-subdir-external-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner --set nfs.server=<nfs.ip.addr> --set nfs.path=/mnt/nfs-server
+        ->If you want to set this as default storageclass, use flag --set storageClass.defaultClass=true
+    #kubectl get -o yaml sc nfs-client
+Unlike all other k8s resources that has only metadata and spec,
+StorageClass requrires provisioner, parameters, reclaimPolicy, volumeBindingMode and metadata.
+There will be a controller pod that acts as the provisioner. The pod name is used as value of provisioner in sc.yaml
+reclaimPolicy is Delete by default. You can set it to Retain. This decides what happens to pv after pvc is deleted.
+volumeBindingMode is Immediate by default. You can set it to WaitForFirstConsumer. This decides if pv is created when pvc is created or when the pod that need pvc is scheduled.
+Along with volumeBindingMode: WaitForFirstConsumer, you may set allowedTopologies: matchLabelExpressions. This lets you set nodes/zones selected to schedule pod as condition to create pv
+For additional NFS servers to be used as cluster storage,
+    #helm install alt-nfs-subdir-external-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner --set nfs.server=<nfs2.ip.addr> --set nfs.path=/mnt/nfs-server --set storageClass.name=nfs-client-2 --set storageClass.provisionerName=k8s-sigs.io/alt-nfs-subdir-external-provisioner
+Now you an create pvc and sc will dynamically create pv to bind to it. But you are missing out on using VolumeSnapshot 
+
+NFS as StorageClass via CSI driver
+Kubernetes has in-tree volume plugins built into the code. This had required all storage providers contributing directly into the main kubernetes code.
+Kubernetes now has csi which is a modernization of in-tree volume plugins.
+csi allows new volume providers to support kubernetes. This also, detaches development of volume providers from the k8s development cycles.
+If someday nfs-subdir-external-provisioner is depreciated or if you just want to use the Modern recommended method with more features, install NFS CSI driver
+    #helm repo add csi-driver-nfs https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
+    #helm search repo -l csi-driver-nfs
+    #helm install csi-driver-nfs csi-driver-nfs/csi-driver-nfs --namespace kube-system --set controller.runOnControlPlane=true
+        ->If you dont want to use the latest version, use --version 4.11.0
+        ->If you intend to use the VolumeSnapshot and VolumeSnapshotContent k8s resources --set externalSnapshotter.enabled=true
+        ->If you have multiple control plane nodes, set replica count to match it with --set controller.replicas=3
+CSI driver installation covers the provisioner and rbac. We need to create the StorageClass.
+    #vim training/nfs-csi-sc.yaml
+        ->set sc.parameters.server as nfs-server-addr and sc.parameters.share as nfs-server-path
+        ->set provisioner, reclaimPolicy, volumeBindingMode and allowVolumeExpansion
+        ->If this is supposed to be default sc, set metadata.annotation.storageclass.kubernetes.io/is-default-class: true
+Now you an create pvc and sc will dynamically create pv to bind to it.
+For additional NFS servers, create nfs2-csi-sc.yaml with new nfs-server-addr and nfs-server-path
+For additional controllers with different properties from https://github.com/kubernetes-csi/csi-driver-nfs/tree/master/charts#latest-chart-configuration. You must customize all the below parameters as well
+    #helm install csi-driver-nfs2 csi-driver-nfs/csi-driver-nfs --namespace kube-system --set driver.name="nfs2.csi.k8s.io" --set controller.name="csi-nfs2-controller" --set rbac.name=nfs2 --set serviceAccount.controller=csi-nfs2-controller-sa --set serviceAccount.node=csi-nfs2-node-sa --set node.name=csi-nfs2-node --set node.livenessProbe.healthPort=39653
+
+crictl
+The purpose kubernetes cluster is to host/run containerised application. No code or build process must be present on any nodes.
+For this reason, doker and podman are not being installed. only the cri is present.
+For installation, refer https://github.com/kubernetes-sigs/cri-tools#install. It should look like this
+    #VER_CRICTL="v1.33.0"
+    #wget https://github.com/kubernetes-sigs/cri-tools/releases/download/$VER_CRICTL/crictl-$VER_CRICTL-linux-amd64.tar.gz
+    #tar -zxvf crictl-$VER_CRICTL-linux-amd64.tar.gz -C /usr/local/bin
+When you are running a deployment that has imagePullPolicy as Never, we will need to pull the image prior to applying the deploy.
+    #crictl version
+    #crictl --version
+    #crictl ps
+    #vim /etc/crictl.yaml
+        ->runtime-endpoint: unix:///var/run/containerd/containerd.sock
+        ->image-endpoint: unix:///var/run/containerd/containerd.sock
+        ->timeout: 10
+        ->debug: true
+    #crictl pull <repo/image:tag>
+    #crictl images
+    #ctr image ls
+    #crictl --help
+crictl is a minimal client we can use to interact with the cri. Build, compose and other docker and podman funtionality will not be present.
+When troubleshooting an issues, if kubectl get, describe, logs are not conclusive, try container inspect 
+    #crictl pods
+    #crictl ps
+    #crictl inspect <container_id>
+If something happens to the api-server or if kubeconfig becomes invalid, kubectl would not be available. But you can still use crictl.
+You can use this cleanup old and unused images that are using up the disk space as well.
+    #crictl images
+    #crictl rmi <image_name>
+    #ctr image rm
+
+Static Pods
+If you need pods that must run as soon as a kublet start, you can run them as static pods.
+Static Pods lifecycle is tied to the node, ie, tied to the kubelet running on node.
+In Control plane, etcd, api-server, controller-manager and scheduler are running as static Pods, created during phase 3 and 4 of init.
+Any pod.yaml that is placed in /etc/kubernetes/manifests will be Static Pods. This is defined in /var/lib/kublet/config.yaml
+----DO NOT ADD or edit static pods in Control Plane--- 
+Using DaemonSet is often better than using Static Pod.
+Lets create a staticpod in a worker node,
+    #kubectl run staticpod --image=nginx --dry-run=client -o yaml | ssh <worker.node.ip> "cat > /etc/kubernetes/manifests/staticpod.yaml"
+The breakdown of the above command is 
+    #kubectl run staticpod --image=nginx --dry-run=client -o yaml
+        ->Copy the yaml content
+    #ssh <worker.node.ip>
+    #cd /etc/kubernetes/manifests
+    #vim staticpod.yaml
+        ->Paste the yaml content
+Now lets check the status
+    #kubectl get pods -w
+Have a look at the static pods present in Control Plane at /etc/kubernetes/manifests.
+Lets cleanup,
+    #ssh <worker.node.ip>
+    #rm -f /etc/kubernetes/manifests/staticpod.yaml
+    #kubectl get pods
+
+Node Maintenance
+All systems must have regular updates and upgrades. If a kernal update is applied, system reboot is required.
+The reebots can be planned in such a way that the k8s workloads are mostly unaffected.
+    #kubectl get nodes
+To block new workloads on a node,
+    #kubectl cordon <node_name>
+        ->This taints the node so that no new workloads are scheduled here
+    #kubectl describe <node_name> | head -n 15
+        ->Find Taint
+    #kubectl uncordon <node_name>
+        ->Removes the NoSchedule taint and makes the node available to host new k8s workloads
+To block new workloads and clear out the running workloads on a node
+    #kubectl drain <node_name>
+        ->same as cordon+remove workloads
+The drain will fail if there are pods of DaemonSets and/or pods with emptydir volumes. To ignore these pods,
+    #kubectl drain <node_name> --ignore-daemonsets --delete-emptydir-data
+After pods get deleted, their deployment will maintain the replica count by using the other available worker nodes
+Now the maintenance activity can be performed. Once the host is rebooted after maintenance, make it available to cluster.
+    #kubectl uncordon <node_name>
+Remember, The k8s scheduler is responsible for balancing the load of k8s resources among the available worker nodes.
+But this resource balancing happens only for new pods/resources, not on live pods.
+After the maintenance the workloads would be unbalanced or maybe even running on just one node. Admins must update this to users
+The users must trigger a scale up and a scale down their workloads so that scheduler can perform resource balancing.
+
+Backup and Restore of etcd
+etcd is the database of the k8s cluster.
+For installation, refer https://github.com/etcd-io/etcd/releases/.
+This installation includes etcd server, and 2 clients etcdctl and etcdutl.
+    #ETCD_VER=v3.6.4
+    #wget https://github.com/etcd-io/etcd/releases/download/${ETCD_VER}/etcd-${ETCD_VER}-linux-amd64.tar.gz 
+    #tar -xzvf etcd-${ETCD_VER}-linux-amd64.tar.gz --no-same-owner
+    #cp -p etcd-${ETCD_VER}-linux-amd64/etcdctl /usr/local/bin/
+    #cp -p etcd-${ETCD_VER}-linux-amd64/etcdutl /usr/local/bin/
+    #etcdctl version
+    #etcdutl version
+The etcdctl connection requires the server endpoint, and the cert, ca and key for authentication.
+    #kubectl describe pod kube-apiserver -n kube-system | grep etcd
+        ->These parameters used by apiserver to connect to etcd
+    #kubectl describe pod etcd -n kube-system | grep -e ca.crt -e server | grep -v peer
+        ->Copy the values. these will be used for our etcdctl connection
+You could also fetch the connection data from ps aux and crictl inspect
+Lets test the connection by getting some data out of etcd
+    #etcdctl --endpoint=localhost:2379 --cacert <path/ca.crt> --cert <path/server.crt> --key <path/server.key> get / --prefix | less
+        ->we are requesting for all key:value whose key start with /
+        ->use --keys-only if you dont want to see the values
+        ->if localhost:2379 doesnt work, find the values of listen-client-urls parameter used in etcd pod
+You could run some workloads or k8s resources on the cluster before we take the backup.
+Lets backup,
+    #etcdctl --endpoint=localhost:2379 --cacert <path/ca.crt> --cert <path/server.crt> --key <path/server.key> snapshot save /backupdir/etcd-periodic-YYYYMMDD_hhmm.db
+ctl client is used for backup utl client is used for restore.
+Lets verify the backup,
+    #etcdutl snapshot status /backupdir/etcd-periodic-YYYYMMDD_hhmm.db
+    #etcdutl --write-out=table snapshot status /backupdir/etcd-periodic-YYYYMMDD_hhmm.db
+Lets make changes to the cluster (delete or add workloads) to observe the overwrite that will be done by the restore.
+Lets restore. Follow the procedure so that nothing breaks or is permanently lost.
+    ->Restore backup to a new/empty/unused path. Ensure /var/lib/etcd is untouched.
+        #etcdutl snapshot restore /backupdir/etcd-periodic-YYYYMMDD_hhmm.db --data-dir /var/lib/etcd-snapshot-YYYYMMDD_hhmm/
+        #ls -la /var/lib/etcd-snapshot-YYYYMMDD_hhmm/
+    ->Backup all Static pods and keep a temporary copy for editing. Ensure /etc/kubernetes/manifests isnt modified.
+        #cp -pr /etc/kubernetes/manifests /etc/kubernetes/manifests-orig-YYYYMMDD_hhmm
+        #cp -pr /etc/kubernetes/manifests /etc/kubernetes/manifests-temp
+    ->Edit etcd.yaml in temp. Ensure no other yaml is modified
+        #vim /etc/kubernetes/manifests-temp/etcd.yaml
+            ->In the block volumes.name=etcd-data
+            ->Update its path to use the restore. volumes.hostPath.path=/var/lib/etcd-snapshot-YYYYMMDD_hhmm/
+    ->Stop all Static Pods by emptying /etc/kubernetes/manifests.
+        #crictl ps
+        #rm -f /etc/kubernetes/manifests/*.yaml
+        #watch crictl ps
+    ->Start all Static Pods along with the modified etcd.yaml
+        #cp -pr /etc/kubernetes/manifests-temp /etc/kubernetes/manifests
+        #watch crictl ps
+    ->Check if the restored workloads are present.
+        #kubectl get all -A -w
+If the restore is not acceptable and you need to revert cluster state to before the restore,
+    ->Repeat step 4
+    ->Repeat step 5 with manifests from /etc/kubernetes/manifests-orig-YYYYMMDD_hhmm
+    ->Repeat step 6
+If restore is acceptable, cleanup/delete the manifests-temp directory
+
+Scheduler Governance = nodeAffinity + podAffinity + podAntiAffinity + Taints + Tolerations
+kube-scheduler selects an optimal node to run new pods.
+Some of the factors that kube-scheduler operates on pod resource request, node resource availablity, affinity spec, data locality(topology), Inter-pod interference, etc 
+To run a pod on a specific node, set nodeSelector on our pod to matchlabels of the node
+    #kubectl get nodes
+    #kubectl edit pod mypod
+        ->spec.nodeName: <node_name>
+    #kubectl get node --show-labels
+    #kubectl label node <node_name> key0=value0
+    #kubectl get node --show-labels
+    #kubectl edit deploy mydeploy
+        ->spec.template.spec.nodeSelector.key0: value0
+    #kubectl edit pod mypod
+        ->spec.nodeSelector.key0: value0
+All nodes have preset labels which include os, arch, hostname, regions, zone, computetype, etc.
+When using preset label keys, ensure the full.path.of/key and correct value are used.
+If you want to live on the edge use nodeName instead of nodeSelector
+If key value is invalid, the pod will not be scheduled. 
+kube-scheduler selects a node in a 2-step operation: 
+    Filtering : Creates list of feasible nodes based on the hard limits of above factors. If list is empty, pod scheduling will fail.
+    Scoring   : Assigns score to each feasible node based on the soft limits of above factors. Node with highest score will run the pod.
+Using affinity.nodeAffinity on a pod, you can set Filter rules and Score rule using matchExpressions.
+If you see requiredDuringSchedulingRequiredDuringExecution, ignore it. It was planned, but never implemented.
+For Filtering we use requiredDuringSchedulingIgnoredDuringExecution:. I will be shortening it to requiredxxx.
+For Scoring  we use preferredDuringSchedulingIgnoredDuringExecution:. I will be shortening it to preferredxx.
+For spec block that can have multiple sets of child terms, I will use [].
+For spec block that can have a single set  of child terms, I will use {}.
+    ->pod.spec.affinity{}.nodeAffinity{}.requiredxxx{}.nodeSelectorTerms[].matchExpressions[]
+                                        .preferredxx[].preference{}.matchExpressions[]
+                                                      .weight{}: 1-100
+matchExpressions supports support set-based matching.
+When a key in matchExpressions is used with Exists or DoesNotExist operator, value is not required
+When a key in matchExpressions is used with In or NotIn operator, an array of values is checked.
+When a key in matchExpressions is matched with interger values, Gt or Lt operator can be used.
+When multiple keys are used in matchExpressions, they are combined with AND operation.
+nodeSelectorTerms requires an array of at least one matchExpression blocks that are combined with OR operation.
+preferredxx requires an array of at least one set of weight+preference. preference can have only one matchExpressions block
+weight can be an integer between 1-100. If the preference matches a node, the weight is added to the node score.
+Taints are set on node to repel pods. Taints format is key=value:effect. Effect can be NoExecute, NoSchedule or PreferNoSchedule
+    #kubectl taint node worker5 mykey=myval:NoSchedule
+        ->Add taint
+A pod with spec.nodeName: worker5 will be scheduled on it even though worker5 has NoSchedule taint
+If worker5 is tainted with NoExecute, the pod will get evicted by kubelet and cannot be scheduled on it.
+When a node is tainted with NoExecute all its pods are evicted immediately.
+Pods can run on tainted nodes if the any tolerations match the taint. Multple tolerations are allowed.
+    #kubectl edit pod mypod
+        ->spec.tolerations: [{"key":"mykey","operator":"Equal","value":"myval","effect":"NoSchedule"}]
+Equal(default) and Exists are the only operators allowed.
+If Exists operator is used with key, value and effect are optional.
+If Exists operator is used with effect, value and key are optional.
+kube-scheduler checks taints and tolerations during filtering (this is my assumtion.)
+kube-scheduler makes node list. kube-scheduler then removes all taints from list that match any pod tolerations. 
+The nodes that still have NoSchedule or NoExecute will be excluded in  feasible node list.
+The nodes that have PreferNoSchedule will be included at the bottom of feasible node list.
+FYI, controller-manager will apply built-in taint to nodes when any network issue, resource pressure or other issues are detected.   
+podAffinity allows us to select nodes depending on what workloads(pods) are running on it. These are all available options
+    ->pod.spec.affinity{}.podAffinity{}.requiredxxx[].labelSelector{}.matchExpressions[]
+                                                     .namespaceSelector{}.matchExpressions[]
+                                                     .topologyKey{}
+                                       .preferredxx[].weight{}: 1-100
+                                                     .podAffinityTerm{}.labelSelector{}.matchExpressions[]
+                                                                       .namespaceSelector{}.matchExpressions[]
+                                                                       .topologyKey{}
+    ->pod.spec.affinity{}.podAntiAffinity{}.requiredxxx[].labelSelector{}.matchExpressions[]
+                                                         .namespaceSelector{}.matchExpressions[]
+                                                         .topologyKey{}
+                                           .preferredxx[].weight{}:1-100
+                                                         .podAffinityTerm{}.labelSelector{}.matchExpressions[]
+                                                                           .namespaceSelector{}.matchExpressions[]
+                                                                           .topologyKey{}
+Use podAffinity to co-locate the pods of your deployment with the pods of another deployment.
+Use podAntiAffinity to force the pods of your deployment to spread evenly across available nodes.
+Use podAntiAffinity to avoid sharing a node with pods that could interfere with your pods.
+topologyKey is key of any node label. You can use preset labels or user/admin defined labels.
+Nodes from CSP will have label keys like topology.kubernetes.io/region topology.kubernetes.io/zone
+Nodes from a DataCenter will have labels keys like rack, floor, ups, gateway, etc.
+Nodes that have a label with this key and identical values are considered to be in the same topology.
+If topologyKey is set as kubernetes.io/node-name or kubernetes.io/hostname every node is its own topology.
+To manage pod spread of a deployment, you can use topologySpreadConstraints 
+    ->pod.spec.topologySpreadConstraints[].maxSkew{}: 1-10
+                                          .topologyKey{}
+                                          .whenUnsatisfiable{}:
+DoNotSchedule and ScheduleAnyway are the only options for whenUnsatisfiable.
+max no(pods in any topology) - min no(pods in any topology)= skew
+
+NetworkPolicy
+NetworkPolicy is a namespace scoped resource. 
+NetworkPolicy rules govern inbound and outbound traffic of selected pods within the same namespace. This allows us to define pod isolations
+While there are about 30 cni add-ons available, only some of them support NetworkPolicy implementation.
+This is the syntax for creating a networkpolicy.yaml
+        ->spec.podSelector{}.matchExpressions[]
+              .ingress[].from[].podSelector{}.matchExpressions[]
+                                namespaceSelector{}.matchExpressions[]
+                                ipBlock{}.cidr{}: <ipaddr>/<subnetmask>
+                                          except[]: <ipaddr>/<subnetmask>
+                         ports[].protocol{}: <TCP or UDP>
+                                .port{}: <containerPort or start_range>
+                                .endport{}: <end_range>
+              .egress[].to[].podSelector{}.matchExpressions[]
+                             namespaceSelector{}.matchExpressions[]
+                             ipBlock{}.cidr{}: <ipaddr>/<subnetmask>
+                                       except[]: <ipaddr>/<subnetmask>
+                         ports[].protocol{}: <TCP or UDP>
+                                .port{}: <portname_in_podspec or containerPort or start_range>
+                                .endport{}: <end_range>
+In a namespace with no NetworkPolicy, all outbound(egress) and inbound(ingress) pod traffic are allowed.
+    #vim training/sample-networkpolicy.yaml
+        ->apiVersion: networking.k8s.io/v1 and kind: NetworkPolicy
+        ->metadata.name:sample-networkpolicy and metadata.namespace: myns
+        ->spec.podSelector.matchLabels.key0: value0
+This networkpolicy will apply to all pods in myns with the label key0: value0.
+If you add more labels in podSelector, only pods that match all key values pairs get affected by the networkpolicy.
+If we define "spec.podSelector: {}" , This will include all pods in myns namespace.
+        ->spec.policyTypes: ["Ingress","Egress"]
+If the policyTypes is not defined, the default value is only Ingress. If you have only ingress rules, you can skip policyTypes
+If have egress rules or ingress+egress rules, then you must define policyTypes.
+        ->spec.ingress: - from: - podSelector.matchLabels.key1: value1
+                          ports: - port: 5432
+Traffic from pods with label key1: value1 from current namespace, destined for containerPort 5432 of spec.podSelector are allowed.
+All other inbound traffic of spec.podSelector is blocked.
+        ->spec.ingress: - from: - namespaceSelector.matchLabels.key2: value2
+                                - podSelector.matchLabels.key3: value3
+                          ports: - port: db-port
+                        - from: - namespaceSelector.matchLabels.key4: value4
+                                  podSelector.matchLabels.key5: value5
+                          ports: - port: 8080
+                                   endport: 8888
+Traffic from all pods running in namespaces with labels key2: value2, destined for containerPort with name db-port of spec.podSelector are allowed.
+Traffic from pods with label key3: value3 from current namespace, destined for containerPort with name db-port of spec.podSelector are allowed.
+Traffic from pods with label key5: value5 running in namespaces with labels key4: value4, destined for any containerPort within range 8080 and 8888 of spec.podSelector are allowed.
+All other inbound traffic of spec.podSelector is blocked.
+        ->spec.egress: - to: - namespaceSelector.matchLabels."kubernetes.io/metadata.name": kube-system
+                               podSelector.matchLabels.k8s-app: kube-dns
+                         ports: - port: 53
+                                  protocol: UDP
+                                - port: 53
+                                  protocol: TCP
+                       - to: - namespaceSelector.matchLabels.key6: value6
+DNS resolution request from spec.podSelector, destined for containerPort 53 of kube-dns pod is allowed
+Traffic from spec.podSelector, destined for any containerPort of any pods running in namespaces with labels key6: value6 are allowed
+All other outbound traffic of spec.podSelector is blocked.
+matchLabels can be swapped out for matchExpressions in any selector of networkpolicy.
+Only Allow rules can be defined in NetworkPolicy. Traffic that doesnt match any rule are blocked.
+NetworkPolicy rules apply only to select pods in a namespace. Every unselected pod and k8s resource has no network restrictions.
+Network policies are applied eventually, not instantly. There is a possibility that an newly allowed destination might become reachable after couple retires.
+Pods must be resiliant to this eventuality. If not, use initContainers that run network checks.
+When networkpolicy that excludes some previously allowed traffic, eventually new requests are blocked. At that instant, none of live connections are not dropped.
+Connections are duplex. With a policy to block all outbound traffic, pods can still reply any requests. Pods cannot make requests to the source of previous transmission.
+Best Practice : First define a default-deny-all NetworkPolicy in the namespace that must enforce restrictions.
+                Then create specific rules to allow expected traffic.
+                #default-deny-all-inbound.yaml : {"spec":{"podSelector":{},"policyTypes":["Ingress"]}}
+                #default-deny-all-outbound.yaml : {"spec":{"podSelector":{},"policyTypes":["Egress"]}}
+When multiple NetworkPolicy rules are active, they do not conflict. They are additive, ie, they are combined with OR operation . 
+Troubleshooting : When permissible requests are being blocked, dropped or not serviced. Check if they eventually work with override-allow-all.
+                  Delete override-allow-all after the troubleshooting session.
+                  #override-allow-all-inbound.yaml : {"spec":{"podSelector":{},"policyTypes":["Ingress"],"ingress":[{}]}}
+                  #override-allow-all-outbound.yaml :  {"spec":{"podSelector":{},"policyTypes":["Egress"],"egress":[{}]}}
+Policy Wildcards : Use with caution. Although this is easier, it will create confustion and is against best practice.
+                   spec.podSelector: {} = all pods in namespace.
+                   spec.ingress: {} = all inbound traffic is allowed. Use to allow requests from outside the cluster. 
+                   spec.ingress: [] = NO inbound traffic.
+                   spec.egress: {} = all outbound traffic is allowed. Use to make connections to outside the cluster.
+                   spec.egress: [] = NO outbound traffic.
+                   spec.ingress: -from: {} =  inbound traffic from any source is allowed. Use this with a port rule.
+                   spec.egress: -to: {} = outbound traffic to any destination is allowed. Use this with a port rule.
+
+Cluster Upgrade
+-----DO NOT skip minor Versions-----
+New minor versions are released every 3 months. For containerd new minor version is every 6 months
+Check if there is a new version to be upgraded to. Compare current version with available version
+    #crictl version && kubeadm version && kubectl version && kubelet --version && kubectl get nodes
+        ->Test pending : Hoping that crictl shows version of containerd as well. If not, use dpkg -l containerd OR apt-cache policy containerd and update doc
+                         Maybe ctr version will work
+Read the changelog to ensure there are no breaking changes. https://github.com/kubernetes/kubernetes/tree/master/CHANGELOG.
+For major version upgrade, you will need get the new yum.repo and the apt.source.list as per the kubeadm installation document
+-----On the first/main Control Node
+    #apt update
+    #apt-cache policy kubeadm
+    #yum list --showduplicates kubeadm --disableexcludes=kubernetes
+Before performing a cluster upgrade, take etcd snapshot and verify it.
+    #etcdctl <options> snapshot save <path>
+    #etcdutl snapshot status <path>
+kubeadm will backup contents of /var/lib/etcd and /etc/kubernetes/manifests as part of the upgrade.
+If there is a disruption during the upgrade, Refer https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-upgrade/#recovering-from-a-failure-state
+Lets upgrade kubeadm. You will need the exact target version number. Including major(xx), minor(yy), and patch(pp)
+    #apt-mark unhold kubeadm && \
+    #apt-get install -y kubeadm='<1.xx.yy-pp>' && \
+    #apt-mark hold kubeadm
+    #yum install -y kubeadm-'<1.xx.yy-pp>' --disableexcludes=kubernetes
+    #kubeadm version
+Once kubeadm is upgraded, we can use it to validate if our cluster is ready to be upgraded.
+    #kubeadm upgrade plan
+        ->Test pending: Will this show outdated containerd??
+This will also show details of the cluster componenets that kubeadm will upgrade.
+Some componenets and configs require intevention from admins. kubeadm will show steps and details of these.
+Lets upgrade the control node components,
+    #kubeadm upgrade -y apply <1.xx.yy>
+        ->Test pending: not sure if -y flag is allowed. Yes is our answer.
+This will upgrade all the static pods of the control plane, upgrade the certificates, upgrade the cluster configuration on the control node.
+-----On the second Control Node
+Lets upgrade kubeadm.
+    #apt-mark unhold kubeadm && \
+    #apt-get install -y kubeadm='<1.xx.yy-pp>' && \
+    #apt-mark hold kubeadm
+    #yum install -y kubeadm-'<1.xx.yy-pp>' --disableexcludes=kubernetes
+    #kubeadm version
+    #kubeadm upgrade node
+If you have more control nodes, repeat the above steps.
+-----On the first/main Control Node
+Lets upgrade the kubelet. You must have seen this message in the kubeadm upgrade plan command.
+    #kubectl get nodes
+    #kubectl drain control_node1 --ignore-daemonsets
+    #apt-mark unhold kubelet kubectl && \
+    #apt-get update && sudo apt-get install -y kubelet='1.33.x-*' kubectl='1.33.x-*' && \
+        ->Test pending: This might be a good spot to upgrade containerd,etcdctl,etcdutl,calium-cli,helm as well
+    #apt-mark hold kubelet kubectl
+    #yum install -y kubelet-'1.33.x-*' kubectl-'1.33.x-*' --disableexcludes=kubernetes
+    #systemctl daemon-reload
+    #systemctl restart kubelet
+    #kubectl uncordon control_node1
+Verify the upgrade,
+    #kubectl get nodes
+-----On the second Control Node
+Upgrade the kubelet. Use the same commands, all of them, that were run in the main control node.
+-----On the Worker Node
+Upgrade the kubeadm, kubelet and kubectl. Use the commands that were run in the second control node.
+After all the nodes have been upgraded and cluster is stable,
+You may cleanup the backup created by kubeadm,
+    #rm -rf kubeadm-backup-etcd-YYYYMMDD_hhmm
+    #rm -rf kubeadm-backup-manifests-YYYYMMDD_hhmm
+
+ClusterRole and Clusterrolebinding
+Serviceaccounts, Roles and Rolebindings are namespace scoped.
+ClusterRole and Clusterrolebindings are not scoped by any ns.
+ClusterRole defines access policies on resources that are not scoped by ns(pv, ns, sc, nodes) and ns scoped resource.
+    #kubectl get clusterrole
+    #kubectl get clusterrole | grep -v system
+        ->view, edit, admin contain authorizations meant for non-admin users and groups.
+        ->cluster-admin authorizations grants full access. This is what we are using.
+    #kubectl describe clusterrole edit
+Rolebindings can be used to bind clusterroles to sa or user. This will limit the authorization of the subject to resources that exist within the same ns.
+Clusterrolebinding can bind a ClusterRole to the sa in any/all ns, or to admin users or to groups users or sa.
+    #kubectl get clusterrolebinding
+    #kubectl describe clusterrolebinding cluster-admin
+        ->the the Group system:masters is bound to cluster-admin clusterrole.
+        ->We are authenticated as user kubernetes-admin, which belongs to the system:masters group.
+    #kubectl get -o yaml clusterrolebinding | less -i
+    #kubectl get -o yaml clusterrolebinding | yq '.items[].subjects | select(.. =="Group") | .[].name'
+        ->These are all the groups that have a clusterrolebinding. Use the same filter to fetch "User"
+Rolebindings and Clusterrolebindings can map only 1 Role or 1 ClusterRole to any numbers of users, groups, and/or sa
+When your Clusterrolebinding must apply for groups of users, you can use custom group_name. All its users must have O=group_name in the subject of the user certificate.
+You could also use any of these system defined groups.
+    ->system:serviceaccounts        : All sa across all ns
+    ->system:serviceaccounts:myns   : All sa within myns
+    ->system:authenticated          : All users
+    ->system:authenticated:myns     : All users within myns
+    ->system:unauthenticated        : All anonymous requests
+
+User access
+We have be interacting with k8s cluster via kubectl. Our kubectl connection to api-server is based on the kubeconfig. 
+    #kubectl config view
+    #less ~/.kube/config
+    #kubectl config get-contexts
+Everytime we run a kubectl command, we are authenticating as user kubernetes-admin.
+In k8s there are no resources that define users or groups. But these are valid subjects that that can be authorized to operate on api-server.
+    #kubectl describe clusterrole cluster-admin
+    #kubectl describe clusterrolebinding cluster-admin
+These are the authorizations that apply to kubernetes-admin.
+Although the kubernetes-admin is not the subject of the cluster-admin binding, it does belong to the group system:masters.
+You can verify this by decoding and reading the subject of client-certificate-data in ~/.kube/config
+    #yq eval '.users[0].user.client-certificate-data' ~/.kube/config | base64 -d | openssl x509 -noout -subject
+    #yq eval '.users[0].user.client-certificate-data' ~/.kube/config | base64 -d | openssl x509 -noout -text
+Any user with this config file and network connectivity to the cluster will have full control over our cluster.
+Users must authenticate with the api-server with limited authorization, just enough to manage their workloads and its dependent resources.
+Lets create a namespace as the project environment.
+    #kubectl create ns project-name
+Set ResourceQuota and LimitRange to block unfair usage of the shared limited resources.
+    #kubectl create quota project-quota --hard=cpu=2,memory=2G,pods=4 -n project-name
+    ->Create project-limitrange.yaml with name, ns, limits.type=Container, limits.max.cpu=250m, limits.max.memory=512Mi
+Lets create project-admin, who can be authenticated by api-server. Create a client.csr and client.key for project-admin
+    #mkdir user_access && cd user_access
+    #openssl req -newkey rsa:2048 -noenc -keyout client.key -subj "/CN=project-admin" -out client.csr
+        ->Err : In GitBash on Windows where "/CN=project-admin" is substituted with 'C:/Program Files/Git/CN=project-admin'. 
+        ->Fix : #MSYS2_ARG_CONV_EXCL='/C' openssl req -newkey
+        ->This creates a key and uses it to create csr. You may also create them seperately as below.
+            #openssl genrsa -out client.key 2048
+            #openssl req -new -key client.key -subj "/CN=client" -out client.csr 
+Create client.crt for project-admin by signing the client.csr with the cluster CA.crt and CA.key.
+    #openssl x509 -req -in client.csr -CA /etc/kubernetes/pki/ca.crt -CAkey /etc/kubernetes/pki/ca.key -days 180 -CAcreateserial -out client.crt
+If authentication is being setup for multiple users they can be grouped together when creating csr.
+    #openssl req -newkey rsa:2048 -noenc -keyout client2.key -subj "/CN=project2-admin/O=group_name" -out client2.csr
+    #openssl req -newkey rsa:2048 -noenc -keyout client3.key -subj "/CN=project3-admin/O=group_name" -out client3.csr
+We can use kubeadm to create a kubeconfig with client.key and client.crt
+    #kubeadm kubeconfig user --client-name=project3-admin --org=group_name > project3-admin.yaml
+Lets create authorization for project-admin.
+You could create a role within project-name ns
+    #kubectl create role project-admin-role --verb=get,list,watch,create,delete,patch,update --resource=pods,deploy,cm,pvc,svc,secrets -n project-name
+While this could cover common actions on common resources, the admin may face forbidden error while operating within the ns.
+It better to use one of the 3 rbac-defaults clusterroles.
+    #kubectl delete role project-admin-role
+    #kubectl create rolebinding project-admin-binding --clusterrole=<admin/edit> --user=project-admin -n project-name
+To provide authorization for a group of admins to the project ns,
+    #kubectl create rolebinding group-name-binding --clusterrole=<admin/edit> --group=group_name -n project-name
+Lets test the access of project-admin.
+    #kubectl config set-credentials project-admin --client-certificate=client.crt --client-key=client.key
+    #kubectl config set-context project-access --cluster=kubernetes --user=project-admin --namespace=project-name
+    #kubectl config use-context project-access
+    #kubectl config get-contexts
+    #kubectl create deploy myweb --image=nginx --replicas=3
+    #kubectl describe deploy myweb
+        ->Ensure namespace is project-name
+    #kubectl get all
+    #kubectl get all -n kube-system
+        ->This must fail. If not recheck the authorization
+If project3-admin was create using kubeadm, test access with 
+    #kubectl --kubeconfig project3-admin.yaml config set-context --namespace=project-name
+    #kubectl --kubeconfig project3-admin.yaml create deploy myweb --image=nginx --replicas=3
+    #kubectl --kubeconfig project3-admin.yaml describe deploy myweb
+        ->Ensure namespace is project-name
+    #kubectl --kubeconfig project3-admin.yaml get all
+    #kubectl --kubeconfig project3-admin.yaml get all -n kube-system
+        ->This must fail. If not recheck the authorization
+Lets create kubeconfig to share with the project team. You can skip this if you had used "kubeadm kubeconfig user" command
+Reference https://kubernetes.io/docs/tasks/access-application-cluster/configure-access-multiple-clusters/#define-clusters-users-and-contexts
+    #kubectl config use-context kubernetes-admin
+    #kubectl config get-contexts
+    #vim client_kubectl.yaml
+        ->Copy available in ../training/config.yaml
+    #kubectl config set-credentials project-admin --client-certificate=client.crt --client-key=client.key --kubeconfig client_kubectl.yaml
+    #kubectl config set-cluster dev-cluster --server=https://192.168.0.200:6443 --certificate-authority=/etc/kubernetes/pki/ca.crt --kubeconfig client_kubectl.yaml
+    #kubectl config set-context project-access --cluster=kubernetes --user=project-admin --namespace=project-name --kubeconfig client_kubectl.yaml
+    #kubectl config use-context project-access --kubeconfig client_kubectl.yaml
+    #kubectl config view --kubeconfig client_kubectl.yaml
+    #cd .. && tar -cvzf user_access.tar.gz user_access/
+You may scp or download user_access.tar.gz file and share it with the project owner.
+
+Cert-Manager
+cert-manager manages tls certificates for us. It can create TLS certificates and renews them before they expire.
+Lets install it with helm.
+    #mkdir cert-manager
+    #curl -fsSL https://cert-manager.io/public-keys/cert-manager-keyring-2021-09-20-1020CF3C033D4F35BAE1C19E1226061C665DF13E.gpg -o ./cert_manager/cert-manager-keyring.gpg
+        ->Optional
+    #helm install cert-manager oci://quay.io/jetstack/charts/cert-manager --version v1.18.2 --namespace cert-manager --create-namespace --verify --keyring ./cert_manager/cert-manager-keyring.gpg --set crds.enabled=true
+        ->Skip the flags "--verify" and "--keyring <path>" if you havent fetched the gpg key
+        ->You can see the contents of the chart with helm pull.
+        #helm repo add jetstack https://charts.jetstack.io 
+        #helm repo update
+        #helm pull jetstack/cert-manager --version v1.18.2 -d ./cert_manager/ --untar
+        ->You can edit values.yaml (set crd.enabled:true) and can install cert-manager from local.
+        #helm install cert-manager ./cert_manager/cert-manager --namespace cert-manager --create-namespace
+For cert-manager to issue certificates, it needs an Issuer or ClusterIssuer resource. Use one of the 3 options.
+    1)If you own a public domain and public IP, letsencrypt can be used as an ClusterIssuer to sign(create) your certificates across your cluster
+        #vim ./cert_manager/letsencrypt-clusterissuer.yaml
+            ->Ensure valid email id is used.
+            ->Verify if ingressClassName exists in the cluster
+    2)If you dont have a public IP, and need tls certificates managed within specific ns, you can have an Issuer that uses a selfsigned CA.jetstack/cert-manager
+        #kubectl create ns sandbox
+            ->Skip this if an exisiting namespace needs tls certificates
+            ->Issuer and CA must exist within a namespace.
+        #vim ./cert_manager/selfsigned-ca-issuer.yaml
+            ->Update all metadata.namespace to be your target namespace.
+    3)If you dont have a public IP, and need tls certificates managed across the cluster, you can have a ClusterIssuer whose CA is within cert-manager ns.
+        #vim ./cert_manager/selfsigned-ca-clusterissuer.yaml
+            ->Ensure ns of the Certificate selfsigned-cluster-ca is the one that cert-manager helm chart has been installed in.
+Check the status of issuer.
+    #kubectl get issuer -A
+    #kubectl get clusterissuer
+    #kubectl get secret -n cert-manager
+        ->Selfsigned CA are stored as secrets. It will be in cert-manager ns for clusterissuerCA and in sandbox ns for IssuerCA
+Lets see if our Issuer can create signed certificates.
+    #vim ./cert_manager/example-certificate.yaml
+    #vim ./cert_manager/anotherexample-certificate.yaml
+When we create a valid Certificate resource. It gets processed to generate a tls Secret
+    #kubectl apply -f ./cert_manager/anotherexample-certificate.yaml
+    #kubectl get certificate,certificaterequest -n sandbox
+    #kubectl get ingress -n sandbox
+        ->letsencrypt will create ingress to validate the certificate. ingress is deleted once certificate is approved.
+    #kubectl get secret -n sandbox
+If there is a failure, you may need to troubleshoot. Below is the process by which we get tls Secret from Certificate.
+    ->Certificate is created. 
+    ->keymanager creates a temporary tls Secret containing only tls.key 
+    ->requestmanager creates a CertificateRequest. requestmanager uses Certificate.spec and tempsecret.data.tls.key to create csr.
+    ->requestmanager base64 encodes the csr and uses it as CertificateRequest.spec.request.
+CertificateRequest is a resource. Admins or users will not deal with them. Only controller pods will manage them.
+    ->cert-manager approves CertificateRequest and then sends it to Issuer.
+    ->Issuer validates the csr, creates signed certificate and returns it to CertificateRequest.
+    ->requestmanager detects status change and certificate data in CertificateRequest.
+    ->requestmanager creates new Secret with metadata.name from Certificate, data.tls.crt and data.ca.crt from CertificateRequest and data.tls.key from tempsecret.
+    ->requestmanager deletes tempsecret
+In Ingress, https gets enabled for all spec.tls.hosts using exisiting tls secrets refered by spec.tls.secretName
+    #kubectl create ingress anotherexample-ingress --rule='anotherexample.com/=anotherexample-service:80,tls=anotherexample-com'
+    #vim ./mongo_k8s/mongoexpress-ingress.yaml
+        ->spec.tls: - secretName:anotherexample-com
+                      hosts: - mongo.com
+    #kubectl get ing -n sandbox -o wide
+selfsigned CA and any certificates signed by it are not trusted. Trust has to be setup for each client/system that will interact with its certificate.
+    On Windows Powershell : 
+        dir cert:\\LocalMachine\
+        Import-Certificate -FilePath "C:\path\CAcert.cer" -CertStoreLocation cert:\CurrentUser\Root
+    On Linux bash :
+        cp /path/CAcert.crt /usr/local/share/ca-certificates/
+        update-ca-certificates
+    On k8s resources :
+        helm upgrade --install trust-manager jetstack/trust-manager --namespace cert-manager --wait
+        https://cert-manager.io/docs/trust/trust-manager/installation/
+Open browser and check https://
+Ingress can auto-create Certificate with annotation.
+    #kubectl annotate ingress example-ingress cert-manager.io/cluster-issuer=my-tls-clusterissuer
+    #vim ./mongo_k8s/mongoexpress-ingress.yaml
+        ->metadata.annotations.cert-manager.io/cluster-issuer:my-tls-clusterissuer
+    #kubectl get ing -n sandbox -o wide
+    #kubectl get certificate,certificaterequest -n sandbox
+    #kubectl get secret -n sandbox
+Default cluster-issuer can be set in cert-manager. This would be useful if you are managing multiple clusterissuers and cant expect users to update their config
+    #kubectl get clusterissuer
+        ->Copy the name of clusterissuer that should be default and ensure its status is Ready.
+    #vim ./cert_manager/helm_tuning/values.yaml
+        ->Paste the clusterissuer name as ingressShim.defaultIssuerName
+    #helm upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager -f ./cert_manager/helm_tuning/cert_manager_with_defaultissuer.yaml
+        ->If repo jetstack/cert-manager is not added, you can substitute with oci://quay.io/jetstack/charts/cert-manager.
+    #kubectl annotate ingress example-ingress kubernetes.io/tls-acme=true
+    #vim ./mongo_k8s/mongoexpress-ingress.yaml
+        ->metadata.annotations.kubernetes.io/tls-acme: "true"
+    #kubectl get ing -n sandbox -o wide
+    #kubectl get certificate,certificaterequest -n sandbox
+    #kubectl get secret -n sandbox
+Lets cleanup,
+    #helm uninstall cert-manager -n cert-manager
+        ->While this will delete all resources installed by helm chart
+        ->It will not touch the Issuers, ClusterIssuers, Certificates that we created. To delete these crds,
+        #kubectl delete crd issuers.cert-manager.io clusterissuers.cert-manager.io certificates.cert-manager.io certificaterequests.cert-manager.io orders.acme.cert-manager.io challenges.acme.cert-manager.io
+        ->Or you could set the flag crd.keep in the chart and then uninstall.
+        #helm upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager --set crd.keep=false
+        #helm uninstall cert-manager -n cert-manager
+        #kubectl delete ns cert-manager sandbox
+        ->This still will not delete any of tls secrets that exist outside these ns.
+    #helm list -A
+
+Gateway API
+Ingress development is frozen. Gateway API is the replacement and will be the new standard.
+What used to be setup in a single Ingress resource is now split between a Gateway resource and a Route resource.
+At the moment Gateway and other associated resources are not part of the vanilla and minimal kubernetes.
+We can add their definitions into our cluster using CRDs,
+    #kubectl explain gateway
+    #kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/standard-install.yaml
+        ->OR
+    #kubectl kustomize "https://github.com/nginx/nginx-gateway-fabric/config/crd/gateway-api/standard" | kubectl apply -f -
+    #kubectl explain --recursive gateway.spec
+From 30+ vendors lets use nginx-gateway-fabric as our Gateway controller.
+    #mkdir ./nginx_gateway_fabric/
+nginx-gateway-fabric has a master-worker or controller-agent architecture.
+During operation, The nginx controller looks for Gateway resource creation/modification.
+For Gateway creation, The controller deploys an nginx worker pod and its lb-service into the ns of the Gateway.
+This worker pod also has an agent that maintains a secure gRPC connection with the controller.
+The controller converts the gateway resource config to nginx config and send it to the worker agent.
+The worker agent applies the config and reloads its nginx. This happens for every modification on any gateway resource.
+The selfsigned certificates used for this secured gRPC connection is valid for 3 years from time of installation.
+If you will uninstall nginx-gateway-fabric before the expiry, then the below setup of cert-manager, Issuer and Certificates is optional.
+Install cert-manager
+    #helm repo list
+    #helm repo add jetstack https://charts.jetstack.io
+    #helm repo update
+    #vim ./nginx_gateway_fabric/helm_tuning/cert_manager_with_enablegateway.yaml
+        ->compare with https://docs.nginx.com/nginx-gateway-fabric/install/secure-certificates/
+    #helm upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager --create-namespace -f ./nginx_gateway_fabric/helm_tuning/cert_manager_with_enablegateway.yaml
+If you already have a trusted ClusterIssuer, skip the below steps of creating an selfsignedCA Issuer
+    #kubectl create ns nginx-gateway
+    #vim ./nginx_gateway_fabric/selfsigned-issuer.yaml
+    #kubectl apply -f ./nginx_gateway_fabric/selfsigned-issuer.yaml
+    #kubectl get issuer,secrets -n nginx-gateway
+Create Certificates for controller and worker using this Issuer or a trusted ClusterIssuer
+    #vim ./nginx_gateway_fabric/controller-certificate.yaml
+    #vim ./nginx_gateway_fabric/worker-certificate.yaml
+        ->custom secretName is used for both Certificates. This affect helm install
+    #kubectl apply -f ./nginx_gateway_fabric/controller-certificate.yaml
+    #kubectl apply -f ./nginx_gateway_fabric/worker-certificate.yaml
+    #kubectl get certificates,certificaterequest,secrets -n nginx-gateway
+Lets install nginx-gateway-fabric
+    #helm install local oci://ghcr.io/nginx/charts/nginx-gateway-fabric --create-namespace -n nginx-gateway -f ./nginx_gateway_fabric/helm_tuning/ngf_with_custom_secretname.yaml
+        ->Avoid the flag "-f file.yaml" if the Certificates have used default secretNames.
+        ->If you dont want to install the latest version, Use the flag "--version 0.0.0-edge" or "--version 2.0.0"
+        ->You can see the contents of the chart with helm pull.
+        #helm pull nginx-gateway oci://ghcr.io/nginx/charts/nginx-gateway-fabric -d ./nginx_gateway_fabric/ --untar
+        ->You can edit values.yaml (set crd.enabled:true) and can install cert-manager from local.
+        #vim ./nginx_gateway_fabric/helm_tuning/ngf_with_custom_secretname.yaml
+            ->Verify the secretname are same as those created by the Certificate resources.
+        #helm upgrade --install local ./nginx_gateway_fabric/nginx-gateway-fabric/ --namespace cert-manager --create-namespace
+    #kubectl get all -n nginx-gateway
+        ->Is there a service?
+This installation creates a GatewayClass that we can use to create Gateway resources.
+    #kubectl get gatewayclass nginx
+This installation includes crds. The nginxgateway crd manages the nginx controller
+For one installation of nginx-gateway-fabric there can be only one nginx-gateway
+    #kubectl describe nginxgateways local-config -n nginx-gateway
+The nginxproxy crd manages the nginx workers. These are used as parentRefs of gateways and gatewayclass.
+    #kubectl describe nginxproxy local-proxy-config -n nginx-gateway
+    #kubectl describe gatewayclass nginx
+You can create your own nginxproxy with different properties.
+When a gatewayclass is attached to new nginxproxy, then all its gateways will have the same properties.
+When a gateway      is attached to new nginxproxy, its properties are merged to the properties of the gatewayclass. If there are conflicts, then nginxproxy gets priority.
+    #kubectl edit nginxproxy ngf-proxy-config -n nginx-gateway
+        ->You can change all gateways to be served by a nodeport service instead of the default loadbalancer service
+        ->ipFamily can be set. Worker replica count and autoscaling can be set. Telemetry can be set
+        ->loglevel can be set. rewriteClientIP can be configured.
+Uniquely, adding labels and annotations for the nginx worker cannot be set in nginxproxy. You can set it for an individual gateway.
+    #kubect edit gateway mygateway -n myns
+        ->Any infrastructure.labels or infrastructure.annotations will be propagated to its nginx worker pods and services.
+
+
+One-to-One. Simple Gateway that listens on port 80 and sends all traffic to backend service. 
+    #vim ./training/gateway-simple.yaml
+    #kubectl describe gateway prod-web
+    #kubectl describe deploy prod-web-nginx
+    #kubectl exec -it prod-web-nginx-podid -- nginx -T
+    #kubectl describe svc prod-web-nginx
+    #kubectl describe httproute prod-web
+One-to-Many. A Gateway that listens on 80, has 3 HTTPRoutes. example.com, foo.example.com/login/*, bar.example.com(with header)
+    #vim ./training/gateway-routing.yaml
+Using this, we can test a canary deployment of a prod application. Testers should use the header "traffic: test" on the prod URL
+    #vim ./training/gateway-rollout-canary-test.yaml
+URL redirection by HTTPRoute. scheme and path
+    #vim ./training/gateway-redirect.yaml
+URL rewrite by HTTPRoute. hostname and path
+    #vim ./training/gateway-rewrite.yaml
+HTTPRoute allows modification of request and response header using the spec.rules.filters block.
+    ->spec.rules[].filters[].type: RequestHeaderModifier
+                            .requestHeaderModifier{}.<add[] or set[] or remove[]>
+    ->spec.rules[].filters[].type: ResponseHeaderModifier
+                            .responseHeaderModifier{}.<add[] or set[] or remove[]>
+For each item of add and set, we need to pass name of header and its value.
+For each item of remove, we only need to pass name of header.
+Traffic splitting can be enabled by listing at least 2 backendRefs within spec.rules
+Traffic ratio for each backend is (its weight):(sum of weight). Default weight is 1
+Using this we can start the release of canary deployment. And adjust the weights over time to complete the release
+    #vim ./training/gateway-rollout-canary-deploy.yaml
+We can also perform a blue-green deployment using traffic splitting. This can also be final stage of canary release.
+    #vim ./training/gateway-rollout-bluegreen-deploy.yaml
+A gateway can be shared with routes of other namespaces.
+    #vim ./training/gateway-sharing.yaml
+ReferenceGrant enables secrets and services to be accessible to gateways and routes in other namespaces.
+    #vim ./training/gateway-referencegrant.yaml
+
+
+
+    
+https://github.com/nginx/nginx-gateway-fabric/tree/main/examples/advanced-routing
+
+Users defined their Ingress to manage http/https traffic. This was possible because of k8s admins made ingressclass available which was created when ingress controller was installed
+ingress.yaml depends on what ingressclass/controller was installed in the cluster. The config is not portable between controllers.
+Users can define HTTPRoute, GRPCRoute, TLSRoute, TCPRoute or UDPRoute rules that will use any existing Gateway. This allows L4 and L7 traffic rules
+k8s admins can create Gateway based on any existing GatewayClass. They define properties and access rules. This was not possible with ingress
+GatewayClass is available by the Gateway controller. This would be installed by either Infra admin or k8s admin.
+Gateway controller is created by any one 30+ vendors. While different GatewayClass may have different features, Gateway spec and HTTPRoute spec is portable.
+Lets use Nginx Gateway Fabric as our GatewayClass, ie, controller. Refer : https://docs.nginx.com/nginx-gateway-fabric/install/helm/
+Nginx Gateway reqires certs
+    
+    #kubectl apply -f ./nginx_gateway_fabric/
+    #kubectl get secrets -n nginx-gateway
+First lets install the CRDs for Gateway API. You can source it from github repos of either k8s-sigs or nginx-gateway-fabric. This is a common first step for any provider.
+
+    
+    

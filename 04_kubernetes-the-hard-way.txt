@@ -1,0 +1,130 @@
+Get 4 VMs with the names jumpbox, server, node-0, node-1
+On jumpbox
+  install wget curl vim openssl git
+  git clone --depth 1 https://github.com/kelseyhightower/kubernetes-the-hard-way.git
+  Download k8s binaries : kubelet, kube-proxy, kube-apiserver, kube-scheduler, kube-controller-manager, kubectl
+  Download necessary binaries tar and unpack: etcd, crictl, containerd, cni, runc
+  install kubectl by copying it from pwd to /usr/local/bin/
+  Create DNS records for server, node-0, node-1
+On jumpbox
+  Create selfsigned ca.key and ca.crt
+  Create certificate and keys for admin, node-0, node-1, kube-proxy, kube-scheduler, kube-controller-manager, kube-api-server, service-accounts. All signed by the ca
+  Send ca.crt, node-{0,1}.{crt,key} to /var/lib/kubelet/ to respective nodes.
+  Send crt and key pairs of node to /var/lib/kubelet/ on respective nodes. Also send ca.crt
+  Send crt and key pairs of ca, kube-api-server, and service-accounts to server node.
+On jumpbox
+  Create node-0.kubeconfig for node-0 and node-1.kubeconfig for node-1
+    set-cluster name=kubernetes-the-hard-way, server=https://server.kubernetes.local:6443 and certificate-authority=ca.crt
+    set-credentials name=system:node:node-0, client-certificate=node-0.crt and client-key=node-0.key
+    set-context name=default, cluster=kubernetes-the-hard-way, user=system:node:node-x
+    use-context default
+  Create kube-proxy.kubeconfig, kube-controller-manager.kubeconfig, kube-scheduler.kubeconfig
+    set-cluster name=kubernetes-the-hard-way, server=https://server.kubernetes.local:6443 and certificate-authority=ca.crt
+    set-credentials name=system:kube-proxy, client-certificate=kube-proxy.crt and client-key=kube-proxy.key
+    set-context name=default, cluster=kubernetes-the-hard-way, user=system:kube-proxy
+    use-context default
+  Create admin.kubeconfig
+    set-cluster name=kubernetes-the-hard-way, server=https://127.0.0.1:6443 and certificate-authority=ca.crt
+    set-credentials name=admin, client-certificate=admin.crt and client-key=admin.key
+    set-context name=default, cluster=kubernetes-the-hard-way, user=admin
+    use-context default
+  Send node-0.kubeconfig and node-1.kubeconfig as /var/lib/kubelet/kubeconfig to respective nodes
+  Send kube-proxy.kubeconfig as /var/lib/kube-proxy/kubeconfig to both nodes
+  Send admin.kubeconfig, kube-controller-manager.kubeconfig, kube-scheduler.kubeconfig to server.
+On jumpbox
+  Generate random 32-bit string and base64 encode it.
+  Apply it into configs/encryption-config.yaml
+  Send encryption-config.yaml to server
+On server,
+  Install etcd.
+    From jumpbox
+      ssh copy (scp) etcd, etcdctl and etcd.service to server.
+    On server,
+      Setup binaries by moving etcd and etcdctl to /usr/local/bin/
+      Setup configuration by mkdir /var/lib/etcd and /etc/etcd/ and then copying ca.crt, kube-api-server.key kube-api-server.crt to /etc/etcd
+      Setup service by moving etcd.service to /etc/systemd/system/. Then systemctl daemon-reload, enable and start.
+      Verify installation with "etcdctl member list"
+  Install kube-controller-manager
+    From jumpbox,
+      ssh copy (scp) kube-controller-manager and kube-controller-manager.service to server
+    On server,
+      Setup binaries by moving kube-controller-manager to /usr/local/bin/
+      Setup configuration by moving kube-controller-manager.kubeconfig to /var/lib/kubernetes.
+        --cluster-cidr=10.200.0.0/16
+      Setup service by moving kube-controller-manager.service to /etc/systemd/system/. Then systemctl daemon-reload, enable and start.
+      Verify after kube-apiserver installation.
+  Install kube-scheduler
+    From jumpbox
+      ssh copy (scp) kube-scheduler, kube-scheduler.yaml and kube-scheduler.service
+    On server
+      Setup binaries by moving kube-scheduler to /usr/local/bin/
+      Setup configuration by moving kube-scheduler.kubeconfig to /var/lib/kubernetes and kube-scheduler.yaml to /etc/kubernetes/config
+      Setup service by moving kube-scheduler.service to /etc/systemd/system/.Then systemctl daemon-reload, enable and start.
+      Verify after kube-apiserver installation.
+  Install kube-apiserver.
+    From jumpbox
+      ssh copy (scp) kube-apiserver, kubectl, kube-apiserver-to-kubelet.yaml and kube-apiserver.service to server.
+    On server,
+      Setup binaries by moving kube-apiserver and kubectl to /usr/local/bin/
+      Setup configuration by moving encryption-config.yaml, and crt and key pairs of ca, kube-api-server, and service-accounts to /var/lib/kubernetes.
+        --service-cluster-ip-range=default=10.0.0.0/8
+      Setup service by moving kube-apiserver.service to /etc/systemd/system/. Then systemctl daemon-reload, enable and start.
+      Verify installation with "kubectl cluster-info --kubeconfig admin.kubeconfig"
+      Apply ClusterRoles kube-apiserver-to-kubelet.yaml
+  Controller installation is complete,
+  From jumpbox, Verify external connectivity with "curl --cacert ca.crt https://server.kubernetes.local:6443/version"
+On node-0 and node-1,
+  Install socat conntrack ipset and kmod
+  Disable swap
+  Prepare installation paths /etc/cni/net.d /opt/cni/bin /etc/containerd/ /var/lib/kubelet /var/lib/kube-proxy /var/lib/kubernetes and /var/run/kubernetes
+  Install CNI
+    From jumpbox
+      ssh copy (scp) 10-bridge.conf, 99-loopback.conf, cni-plugins/* to node-1 and node-0
+    On node-0 and node-1,
+      Setup binaries by moving all contents of cni-plugins/ to /opt/cni/bin/
+      Setup configuration by
+        editing the subnet in 10-bridge.conf with reference to machines.txt
+          10.200.0.0/24 and 10.200.1.0/24
+        moving 10-bridge.conf 99-loopback.conf to /etc/cni/net.d/
+        enabling kernal module br-netfilter
+        enabling net.bridge.bridge-nf-call-iptables
+  Install CRI
+    From jumpbox
+      ssh copy (scp) containerd, containerd-shim-runc-v2, containerd-stress, crictl, ctr, runc, containerd-config.toml, containerd.service to node-1 and node-0
+    On node-0 and node-1,
+      Setup binaries by moving containerd, containerd-shim-runc-v2, containerd-stress to /bin/ and runc, ctr and crictl to /usr/local/bin/
+      Setup configuration by moving containerd-config.toml to /etc/containerd/
+      Setup service by moving containerd.service to /etc/systemd/system/. Then systemctl daemon-reload, enable and start.
+  Install kube-proxy
+    From jumpbox
+      ssh copy (scp) kube-proxy, kube-proxy-config.yaml, kube-proxy.service to node-1 and node-0
+    On node-0 and node-1,
+      Setup binaries by moving kube-proxy to /usr/local/bin/
+      Setup configuration by moving kube-proxy-config.yaml to /var/lib/kube-proxy/
+        clusterCIDR: "10.200.0.0/16"
+      Setup service by moving kube-proxy.service to /etc/systemd/system/. Then systemctl daemon-reload, enable and start.
+  Install kubelet
+    From jumpbox
+      ssh copy (scp) kubelet, kubelet-config.yaml, kubelet.service, to node-1 and node-0
+    On node-0 and node-1,
+      Setup binaries by moving kubelet to /usr/local/bin/
+      Setup configuration by moving kubelet-config.yaml /var/lib/kubelet/
+      Setup service by moving kubelet.service to /etc/systemd/system/. Then systemctl daemon-reload, enable and start.
+  Verify installation
+    From server
+      #kubectl get nodes --kubeconfig admin.kubeconfig
+On jumpbox
+  Create local kubeconfig
+    set-cluster name=kubernetes-the-hard-way, server=https://server.kubernetes.local:6443 and certificate-authority=ca.crt
+    set-credentials name=admin, client-certificate=admin.crt and client-key=admin.key
+    set-context name=kubernetes-the-hard-way, cluster=kubernetes-the-hard-way, user=admin
+    use-context kubernetes-the-hard-way
+  Verify "kubectl version" and "kubectl get nodes"
+Configure ip routing table in server, node-0 and node-1
+  On server,
+    ip route add node-0-pod-subnet via node-0-ip-addr
+    ip route add node-1-pod-subnet via node-1-ip-addr
+  On node-0,
+    ip route add node-1-pod-subnet via node-1-ip-addr
+  On node-1,
+    ip route add node-0-pod-subnet via node-0-ip-addr

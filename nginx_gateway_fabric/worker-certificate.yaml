@@ -1,0 +1,17 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: nginx-worker
+  namespace: nginx-gateway
+spec:
+  # secretName: agent-tls
+  # agent-tls is the secretName expected by the default nginx helm chart.
+  # When changing it, update certGenerator.agentTLSSecretName during installation.
+  secretName: worker-tls
+  usages:
+  - "digital signature"
+  - "key encipherment"
+  dnsNames:
+  - "*.cluster.local"
+  issuerRef:
+    name: nginx-gateway-issuer

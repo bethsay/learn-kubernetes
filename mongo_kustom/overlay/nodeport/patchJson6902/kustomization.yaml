@@ -1,0 +1,13 @@
+resources:
+  - ../../../base
+patches:
+  - target:
+      kind: Service
+      name: mongo-express-service
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30001

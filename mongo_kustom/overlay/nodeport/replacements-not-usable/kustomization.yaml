@@ -1,0 +1,36 @@
+resources:
+  - ../../../base/express
+  - dummy-np.yaml
+replacements:
+- source:
+    kind: Service
+    name: dummy
+    fieldPath: spec.type
+  targets:
+  - select:
+      kind: Service
+      name: express-service
+    fieldPaths:
+    - spec.type
+- source:
+    kind: Service
+    name: dummy
+    fieldPath: spec.ports.0.nodePort
+  targets:
+  - select:
+      kind: Service
+      name: express-service
+    fieldPaths:
+    - spec.ports.0.nodePort
+    options:
+      create: true
+#- source:
+#    kind: Service
+#    name: dummy
+#    fieldPath: spec
+#  targets:
+#  - select:
+#      kind: Service
+#      name: express-service
+#    fieldPaths:
+#    - spec

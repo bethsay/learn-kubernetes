@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: nginx-controller
+  namespace: nginx-gateway
+spec:
+  # secretName: server-tls
+  # server-tls is the secretName expected by the default nginx helm chart.
+  # When changing it, update certGenerator.serverTLSSecretName during installation.
+  secretName: controller-tls
+  usages:
+  - digital signature
+  - key encipherment
+  dnsNames:
+  - local-nginx-gateway-fabric.nginx-gateway.svc 
+  # this value may need to be updated. Current format is <release_name>-nginx-gateway-fabric.<namespace>.svc
+  issuerRef:
+    name: nginx-gateway-issuer

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Config
+preferences: {}
+clusters:
+- name: dev-cluster
+  cluster:
+users:
+- name: project-admin
+  user:
+contexts:
+- name: project-access
+  context:
+  

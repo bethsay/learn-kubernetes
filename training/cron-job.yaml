@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hellocron
+spec:
+  jobTemplate:
+    spec:
+      completions: 2
+      template:
+        spec:
+          containers:
+          - command:
+            - /bin/sh
+            args:
+            - '-c'
+            - 'echo Hello! Today is "$(date)"'
+            image: busybox
+            name: hellocron
+            resources: {}
+          restartPolicy: OnFailure
+  schedule: '*/2 * * * *'
+  successfulJobsHistoryLimit: 2
+status: {}

@@ -1,0 +1,8 @@
+*.key
+*secret*
+!mongo_k8s/k8s_template/k8s_secret-template.yaml
+!fibonacci_project/k8s/k8s_template/fibonacci-secret-template.yaml
+training/www.toothycat.net/
+!training/generated-cm-secret-in-deploy.yaml
+!nginx_gateway_fabric/helm_tuning/ngf_with_custom_secretname.yaml
+*Exam*

@@ -1,0 +1,23 @@
+resources:
+  - ./db
+  - ./express
+secretGenerator:
+- name: secret
+  envs:
+  - ./secret.key
+namePrefix: mongo-
+labels:
+  - pairs:
+      app: mongo
+    includeSelectors: true 
+replacements:
+- source:
+    kind: Service
+    name: db-service
+    fieldPath: metadata.name
+  targets:
+  - select:
+      kind: Deployment
+      name: express-deploy
+    fieldPaths:
+    - spec.template.spec.containers.0.env.2.value

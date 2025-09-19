@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: myweb
+  name: myweb
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myweb
+  strategy: {}
+  template:
+    metadata:
+      labels:
+        app: myweb
+    spec:
+      containers:
+      - image: nginx
+        name: nginx
+        resources: {}
+        volumeMounts:
+        - mountPath: /usr/share/nginx/html
+          name: home
+        - mountPath: /usr/share/nginx/html/banners/any
+          name: banner-a
+        - mountPath: /usr/share/nginx/html/banners/permanent
+          name: banner-p
+        - mountPath: /usr/share/nginx/html/css
+          name: css
+        - mountPath: /usr/share/nginx/html/img
+          name: img
+      volumes:
+      - name: home
+        configMap:
+          name: myweb-home-cm
+      - name: banner-a
+        configMap:
+          name: myweb-banners-a-cm
+      - name: banner-p
+        configMap:
+          name: myweb-banners-p-cm
+      - name: css
+        configMap:
+          name: myweb-css-cm
+      - name: img
+        configMap:
+          name: myweb-img-cm

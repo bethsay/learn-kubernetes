@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: mongo-quota
+  namespace: mongo-dev
+spec:
+  hard:
+    cpu: "2"                    #shorthand for requests.cpu
+    memory: 1Gi                 #shorthand for requests.memory
+    limits.cpu: "2"
+    limits.memory: 2Gi
+    count/deployments.apps: "2"
+    pods: "2"                   #shorthand for count/pods
+    services: "2"               #shorthand for count/services

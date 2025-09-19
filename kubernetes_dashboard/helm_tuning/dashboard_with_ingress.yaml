@@ -1,0 +1,10 @@
+app:
+  ingress:
+    enabled: true
+    hosts:
+      - dashboard.com
+nginx:
+  enabled: true
+  controller:
+    service:
+      type: LoadBalancer

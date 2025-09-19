@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      component: datacache
+  template:
+    metadata:
+      labels:
+        component: datacache
+    spec:
+      containers:
+      - name: redis
+        image: redis
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+          requests: 
+            memory: "64Mi"
+            cpu: "250m"
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-volume
+          mountPath: /data
+          subPath: redisdata
+      volumes:
+      - name: redis-volume
+        persistentVolumeClaim:
+          claimName: redis-pvc

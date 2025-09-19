@@ -1,0 +1,704 @@
+    #kubectl version
+    #kubectl completion -h | less
+        ->Follow the steps to enable command complete for your respective shell and OS
+    #kubectl run mypod --image=nginx
+    #kubectl get pod
+    #kubectl get pod mypod -o yaml | less
+    #kubectl describe pod mypod | less
+    #kubectl delete pod mypod
+    #kubectl get events
+    #kubectl get nodes
+    #kubectl describe node docker-desktop
+
+To make working with YAML on vim copy the following config into .vimrc
+    #vim ~/.vimrc
+        ->autocmd FileType yaml setlocal ai ts=2 sw=2 et
+
+    #kubectl explain pod
+    #kubectl explain pod.spec | less
+    #kubectl explain --recursive pod.spec | less
+
+    #kubectl create deploy myweb --image=nginx --replicas=3
+    #kubectl describe deploy myweb | less -i
+        ->notice label and selector
+    #kubectl get all
+    #kubectl create deploy myredis --image=redis:alpine --port=6379
+    #kubectl scale deploy myredis --replicas=3
+    #kubectl edit deploy myredis
+        ->try modifying the ns(will fail), image, port, replicas, labels(will fail)
+    #kubectl get all
+    #kubectl get all --selector app=myredis
+    #kubectl describe deploy myredis
+    #kubectl set resources deployment myweb --limits=cpu=200m,memory=512Mi --requests=cpu=100m,memory=256Mi
+        ->If limit is for 1 container in multi-container deployment use flag -c=<container_name> 
+    #kubectl set image deploy myredis redis=redis:alpine
+        ->Note that syntax of the last parameter is <container_name>=<image>:<tag>
+    #kubectl set image deploy myredis *=redis:alpine
+    #kubectl expose deploy myweb --port=80 --name=myweb-service --targetport=80 --type=ClusterIP
+    #kubectl create service clusterip redis-service --tcp=6379:6379
+    #kubectl describe deployment.apps/myredis | grep label -i -C 1
+    #kubectl edit redis-service
+        ->set spec.selector : app:myredis
+    #kubectl get endpoints
+        ->endpoints are the target IPs of pods selected by services. You will see node IP if the service target is a static pod.
+    #kubectl create ingress myweb-ingress --class=nginx --rule='domain.com/=myweb-service:80' --rule='domain2.org/hello=hello-app:8080'
+    #kubectl describe ingress myweb-ingress
+    #kubectl create deploy hello-app --image=gcr.io/google-samples/hello-app:2.0
+    #kubectl expose deploy hello-app --port=8080
+    
+To add new labels to any k8s resource
+    #kubectl label deploy myweb mylabel=http
+    #kubectl label deploy myredis mylabel=datastore
+    #kubectl get all --show-labels
+label command will only modify the metadata of the k8s resource. The metadata in the spec.template and spec.selector will not be modified 
+To overwrite existing labels
+    #kubectl label deploy myweb mylabel=proxy
+    #kubectl label --overwrite deploy myweb mylabel=proxy
+    #kubectl get all --show-labels
+To remove labels
+    #kubectl label deploy myweb mylabel-
+    #kubectl label deploy myredis mylabel-
+    #kubectl label rs <rs_name> app-
+    #kubectl label pod <pod_name> app-
+    #kubectl get all --show-labels
+Removing label from pod or rs will disconnect them from the managment of the deployment that created them. You will be responsible for their cleanup. 
+
+Generating yaml files
+If you use dry-run, the kube resource is not created.
+dry-run=client -o yaml : To see the yaml file that could have been sent by the client to create the resource, ie, yaml file by kubectl to api-server
+dry-run=server -o yaml : To see the yaml file that could have been sent by the server to create the resource, ie, yaml file by api-server to kubelet
+    #kubectl run mypod --image=nginx --dry-run=client -o yaml > training/generated-pod1.yaml
+    #kubectl run mypod --dry-run=client -o yaml --image=busybox -- sleep 3600 > training/generated-pod2.yaml
+busybox container will exit as soon as it completes running any of our command. If we dont give any command, it will shutdown without doing anything.
+Running busybox in a pod will be stuck in reboot loop as the default spec.restartPolicy is Always. To resolve this, keep busybox alive for min 10 minutes by passing the command sleep.
+CMD overide for a container in a pod can be passed using below syntax. If this kubectl options is used, every other kubectl option must typed beforehand.
+#kubectl run <pod_name> --image=<image_name> -- <CMD1> <CMD2> <CMD3>
+If you try to use any kubectl options after CMD, it will lost as kubectl will see them as additional arguments/commands for the container.
+
+Running a pod with a sidecar.
+    #touch training/multi-pod.yaml
+        ->Run busybox container to run a loop that write date to a file on a shared volume
+        ->Run nginx container to host the file from the shared volume and listen on port 80
+    #kubectl apply -f training/multi-pod.yaml
+Check if pod is running
+    #kubectl get pods
+If pod has some other status, at least one container has an error. Troubleshoot with describe
+    #kubectl describe pod/<pod_name>
+Check the contents of shared volume
+    #kubectl exec -it pod/<pod_name> -c <container_name> -- sh
+        #tail -f </mounted/path/of/volume/file_name>
+    #kubectl port-forward pod/<pod_name> 8080:80
+On browser open http://localhost:8080/
+Lets cleanup
+    #kubectl delete -f training/multi-pod.yaml
+
+Running a pod with initContainers
+    #touch training/init-pod.yaml
+        ->Use busybox as initContainers to wget the index.html of https://password.town into the shared workdir volume. Pick any from https://1mb.club/ thats less that 30Mb.
+        ->Run nginx that listens on port 80 and serves the index.html loaded into workdir volume.
+    #kubectl apply -f training/init-pod.yaml
+Check if pod is running. If you see any other status, troubleshoot with describe 
+    #kubectl get pods
+    #kubectl port-forward pod/<pod_name> 8888:80
+On browser open http://localhost:8888/
+Check the container status
+    #kubectl describe pod/<pod_name>
+If any of the spec.initContainers doesnt not have Exit Code 0 or state Completed, none of the spec.container will start.
+Lets test this by running busybox with a very long sleep command
+    #kubectl delete -f training/init-pod.yaml
+    #vim training/init-pod.yaml
+        ->spec.initContainers.command: ["sleep", "1500"]
+    #kubectl get pods
+    #kubectl describe pod/<pod_name>
+You will see, even though busybox is running(state) and no errors, nginx will be waiting(state).
+Lets cleanup
+    #kubectl delete -f training/init-pod.yaml
+
+A quick method for testing or troubleshooting running pods with ui based containers is port-forward.
+    #kubectl port-forward pod <pod_name> <host_port>:<containerPort>
+This will allow the container in a running pod to be accessible and recieve requests via ip:port of the host machine.
+This port-forward remains active as long we do not inturupt or kill the command.
+
+Probes
+startupProbe : Determines when a container is ready to be verfied by readinessProbe and livenessProbe.
+readinessProbe : Determines when a container is ready to accept traffic. Failure will cause pod to disconnect from all service endpoints.
+livenessProbe : Determines when a container is malfuntioning. Failure will cause kubelet to restart a container. Use with caution. For know deadlocks senarios.
+Commonly, livenessProbe=(readinessProbe with higher failure count/threshold
+Incorrect implementation of liveness probes can cause cascading failures. If 1 pod fails liveness during high-load, it will cause higher load and failures on replicas
+Probe failure = initialDelaySeconds + (failureThreshold * periodSeconds)
+    ->pod.spec.containers[].livenessProbe{}.exec{}.command[]         #For success, command must exit with code 0. Use it like container.args[]
+                                           .initialDelaySeconds{}    #Default is 0
+                                           .periodSeconds{}          #Default is 10. Minimum is 1
+                                           .failureThreshold{}       #Default is 3.  Minimum is 1
+                                           .timeoutSeconds{}         #Default is 1.  Minimum is 1
+                                           .terminationGracePeriodSeconds     #Default is inherited from pod or 30. Cannot be set for readinessProbe
+    ->pod.spec.containers[].livenessProbe{}.httpGet{}.port{}         #For success, http response must be between 200 and 400
+                                                     .path{}         #Default is /
+                                                     .host{}         #Default is pod ip address
+                                                     .scheme{}       #Default is HTTP. cert check is skipped for HTTPS
+                                                     .httpHeaders[].name{}    #Default are "User-Agent"      and "Accept"
+                                                                   .value{}   #Default are "kube-probe/1.33" and "*/*"
+                                           .periodSeconds{}
+    ->pod.spec.containers[].livenessProbe{}.tcpSocket{}.port{}       #For success, connection to port must succeed
+                                           .periodSeconds{}
+    ->pod.spec.containers[].startupProbe{}.<same as liveness>
+    ->pod.spec.containers[].readinessProbe{}.<same as liveness>
+                                            .successThreshold         #Default is 1. Cannot be modified for livenessProbe or startupProbe
+If Probes using httpGet are redirected to same container(host), the probe follows max 11 hops. After which it is is considered a success with a ProbeWarning event.
+If Probes using httpGet are redirected to external host, redirect is not followed and is considered a success with a ProbeWarning event.
+tcpSocket probes are processed at node, not the pod or container or any service
+
+Running Jobs
+    #kubectl create job hellojob --image=busybox -- echo Hello! Today is "$(date)"
+    #kubectl run unstablepod --image=busybox -- echo Hello! Today is "$(date)"
+Check the job and pod status and their output
+    #kubectl get jobs,pods
+    #kubectl describe pod/<pod_name>
+    #kubectl logs pod/<pod_name>
+    #watch kubectl get all
+You will see unstablepod is in a restart loop with status CrashLoopBackOff even though its last state is completed with exit code 0.
+While the pod managed by hellojob has run once successfully but doesnt restart.
+    #kubectl delete job hellojob
+    #kubectl delete pod unstablepod
+    #kubectl get all
+    #kubectl create job multi-pod-job --dry-run=client -o yaml --image=busybox -- sleep 10 > training/multi-job.yaml
+    #kubectl explain job.spec | less -i
+        ->lookup completions, parallelism, template(restartPolicy) and ttlSecondsAfterFinished
+    #vim training/multi-job.yaml
+        ->the job should have 3 completions and should auto clean after 20s.
+    #kubectl apply -f training/multi-job.yaml
+    #watch kubectl get all
+You should see the job creating 3 pods, sequentially, and after its ttl, delete the pods and the job itself.
+For the job to run all pods together, set spec.parallelism the same number as completions. and run it again.
+Cleanup is handled by ttlSecondsAfterFinished.
+
+Creating Cronjobs
+    #kubectl create cronjob hellocron --schedule="*/2 * * * *" --image=busybox -- echo Hello! Today is "$(date)"
+    #kubectl get all
+You could wait for 2 minutes and watch if the cronjob runs successfully.
+Or you could create a job from the spec.jobtemplate of cronjob. 
+    #kubectl create job checkcron --from=cronjob/hellocron
+    #watch kubectl get all
+    #kubectl logs pod/<pod_name>
+If a job has not completed before the next cron time, there will be multiple jobs running concurrently by default. To stop this, use .spec.concurrencyPolicy as False.
+Cronjobs will maintain history of last 3 completed jobs and its pods. When the 4th job is complete, the oldest one is deleted. This includes the job validatecron.
+This can be modified with spec.successfulJobsHistoryLimit. Similarly, default value of spec.failedJobsHistoryLimit is 1
+completions, parallelism can be defined within the spec.jobtemplate.
+Check the yaml indentation and description of the cronjob spec
+    #kubectl explain --recursive cronjob | less -i
+    #kubectl explain cronjob.spec | less -i
+    #kubectl create cronjob hellocron --schedule="*/2 * * * *" --dry-run=client -o yaml --image=busybox > training/cron-job.yaml
+    #vim training/cron-job.yaml
+        ->clean up metadata from every block. Keep name of cronjob and container 
+        ->set the command as /bin/sh and arg as the above echo command.
+        ->set completions as 2 within jobtemplate.spec and successfulJobsHistoryLimit as 2
+    #kubectl apply -f training/cron-job.yaml
+    #kubectl get all
+If its taking too long for the first cron run a job from cronjob
+    #kubectl create job checkcron --from=cronjob/hellocron
+    #kubectl get all
+    #kubectl logs pod/<pod_name>
+    #watch kubectl get all
+observe the jobs and pods.
+Lets cleanup
+    #kubectl delete cronjob/hellocron
+
+Deployment update strategy
+When image, env, or ports of a deployment are modified, it is considered as an update.
+2 types of update strategy are available. You can define them in spec.strategy.type in deployment.yaml file or with kubectl edit deploy
+    Recreate : Use this if the application cannot operate when different versions of it are live.
+               During an update, the deployment will first teminate and delete all exiting pods.
+               After that, the new replicaset will be create, which will then start create the updated pods
+    RollingUpdate : This is the default type and the prefered way for modern apps. Deployment will first create the updated replicaset.
+                    As it scales up and brings new pods to running state, simultaneously, the old rs will scale down to 0. This can be tuned in spec.strategy.rollingUpdate
+                    maxSurge       : defines number of replacement pods allowed to exceed the deployment replica count. Default is 25%
+                    maxUnavailable : defines how many pod the old rs can scale down while the new rs brings the replacement pods to running status. Default is 25%
+                    Both values can be set as percentage or as pod count. If both are set as 0, deployment will not be valid.
+Deployment update history is tracked.
+    #kubectl rollout history deploy myredis
+Check the details that created each revision of a deployment
+    #kubectl rollout history deploy myredis --revision=3
+If the deployment update is successful but the new application doesnt meet the the expectations,
+we can browse the details rollout revisions rollback to any of them.
+    #kubectl rollout undo deploy myredis --to-revision=1
+    #kubectl rollout status myredis
+    #kubectl rollout history deploy myredis
+The number of revisions or replicaset that a deployment will maintains defined in revisionHistoryLimit spec.revisionHistoryLimit. Default count is 10.
+Lets cleanup,
+    #kubectl delete deploy myredis
+
+DaemonSet
+Cannot be created with kubectl create. Since it is similar to deployment let generate a yaml file for it
+    #kubectl create deploy myds --image=nginx --dry-run=client -o yaml > training/daemonset.yaml
+    #vim training/daemonset.yaml
+        ->Replace Deployment with DaemonSet. Delete the replica and strategy spec
+    #kubectl apply -f training/daemonset.yaml
+Lets cleanup,
+    #kubectl delete ds myds
+
+---------------------------------------------------------------------------Pending : Horizontal Pod autoscaler---------------------------------------------------------------------------
+Deploy Metrics Server
+Deploy hpa-example deployment and service
+#kubectl autoscale deploy hpa-example --cpu-percent=50 --min=1 --max=10
+#kubectl api-resources --namespaced=true | grep -i autoscale
+#kubectl get hpa; kubectl describe hpa
+TTY2 - #kubectl run -it load-generator --rm --restart=Never --image=busybox -- /bin/sh -c 'while sleep 0.01; do wget -q -O - http://servicename; done'
+            ->wget -q = quiet
+            ->wget -o file = store wget logs in file
+            ->wget -O file = store document from website into file
+            ->wget -O -    = send document from website to stdout
+TTY1 - #kubectl get hpa
+       #kubectl get all
+       #kubectl delete pod load-generator
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Storage in k8s
+Docker volumes allowed containers to persist data beyond life of the container. This path must be path on the docker host.
+Pods run container and also manage volumes required for the container. hostpath is one of about 30 storage options.
+    #kubectl explain pod.spec.volumes | less
+pvc can abstract pod volumes, thereby allowing pods and deployments to work in any k8s cluster, using any storage provider.
+The storage provider is made available to a k8s cluster by defining them as pv or storageclass resources.
+k8s makes the abstract pvc to a real resource by matching pvc spec to available pv or by creating pv from storageclass using pvc spec.
+emptydir was using in training/multi-pod.yaml and training/init-pod.yaml 
+pod.spec.volumes.emptydir will create a temp storage that can be shared by all containers in a pod. The data will persist for the life of the pod.
+In pv and pvc, capacity and accessmode must be specified. Capacity may be Ti, Gi, Mi, Ki, T, G, M, k.
+AccessMode defines if the pv can be mounted for (RW)read-write || (RO)read-only. 
+AccessMode defines if the pv can be mounted (O)once onto a single node || (X)many times on multiple nodes || (OP)once onto a single pod in a node.
+Available accessMode are RWO, ROX, RWX, RWOP. The storage provider may not support all accessmode
+Lets create pv
+    #touch training/pv.yaml
+        ->create a pv with capacity 1gb storage and RWO accessmode using a hostpath.
+    #kubectl apply -f training/pv.yaml
+    #kubectl get pv
+    #kubectl describe pv mypv
+The hostpath doesnt need to exist prior to pv creation. k8s will create the path once a pvc is bound to it
+At the moment, status is Available and Claim is empty.
+Lets create pvc
+    #touch training/pvc.yaml
+        ->create a pvc that requests 500mb storage and accessmode of RWO
+    #kubectl apply -f training/pvc.yaml
+    #kubectl get pvc
+    #kubectl get pv
+You will see 2 pv listed. mypv still available and unclaimed while a pv was generated and claimed by default/mypvc with status Bound.
+pvc is scoped by namespace and pv is not. So, Claim status of pv includes <ns>/<pvc_name> 
+Here, when the pvc was created, k8s compared the pvc request+accessmode with capacity+accessmode of all pv and didnt find exact match.
+k8s then checked if the default storageclass can fulfil the pvc spec. Since it could, new pv was created from sc and that was bound to the pvc.
+If default sc was not available, k8s will look for a pv with exact match of accessmode and and higher storage capacity than pvc storage request.
+If no pv could be bound to pvc, its status will remain pending.
+    #kubectl describe pvc mypvc
+    #kubectl describe pv <mypvc_name>
+In pvc description, you will see the storageclass that created the pv and 'used by' is none.
+In pv description, you will see the same storageclass and the source of the pv would be a hostpath that looks like /var/lib/k8s-pvs/mypvc/. 
+In DockerDesktop on Windows the actual location is //wsl.localhost/docker-desktop/mnt/docker-desktop-disk/data/k8s-pvs/mypvc/
+Lets create a pod to use this pvc
+    #touch training/pvc-pod.yaml
+        ->create a pod that runs the nginx image and uses mypvc
+    #kubectl apply -f training/pvc-pod.yaml
+    #kubectl get pv,pvc,pod -o wide
+    #kubectl exec -it mypvc-pod -- /bin/bash
+        #touch /usr/share/nginx/html/podfile.html
+        #exit
+    #kubectl get pv,pvc,pod -o wide
+    #ssh <pod_host> ls -la /home/localpv
+    #ls -l /var/lib/k8s-pvs/mypvc/
+    #ls -l //wsl.localhost/docker-desktop/mnt/docker-desktop-disk/data/k8s-pvs/mypvc/
+    #minikube ssh
+        #ls -l <mypvc_name_source_path>
+You should see the file that was created in mypvc-pod is available in a hostpath on the k8s node.
+Lets check the storageclass that created the pv on demand.
+    #kubectl get sc
+    #kubectl describe sc
+Storageclass is a k8s resource. But if a non existing sc is sepecified in a pv and pvc, it will operate as a label. 
+To bind pv and pvc, storage_size+accessmode+storageclass need to match.
+Lets create a pv and pvc with custom sc and run a pod using this pvc
+    #touch training/customsc-pv-pvc-pod.yaml
+        ->create a pv of 100mb using hostpath and mysc
+        ->create a pvc needing 70mb and mysc
+        ->create a pod to run nginx and to use above pvc
+    #kubectl apply -f training/customsc-pv-pvc-pod.yaml
+    #kubectl get pv,pvc,pod
+Although storage capacity and request were different between mysc-pvc and mysc-pv k8s was able to match them by the accessmode+Storageclass.
+You will notice that the pvc request has been modified to 100mb to match the pv capacity
+    #kubectl describe pvc mysc-pvc
+    #kubectl get -o yaml pvc mysc-pvc
+Lets write to the pod volume
+    #kubectl exec -it mypvc-pod -- /bin/bash
+        #touch /usr/share/nginx/html/podfile.html
+        #exit
+    #kubectl describe pv mysc-pv
+        ->you should see Source: Path: /home/mysc-pv
+    #ssh <pod_host> ls -la /home/mysc-pv
+    #ls -l /home/mysc-pv
+    #ls -l //wsl.localhost/docker-desktop//tmp/docker-desktop-root/home/mysc-pv/
+    #minikube ssh
+        #ls -l <mysc-pv_source_path>
+Lets cleanup,
+    #kubectl get pv,pvc,pod -o yaml
+mypvc is bound to a pv created by default storageclass of DockerDesktop which has Reclaim Policy has delete.
+mysc-pvc is bound to a mysc-pv that was created by our yaml file. The default Reclaim Policy of Retain has been applied requiring manual cleanup.
+    #kubectl delete pod/mysc-pod pvc/mysc-pvc pv/mysc-pv pod/mypvc-pod pvc/mypvc pv/mypv
+    #rm -r //wsl.localhost/docker-desktop//tmp/docker-desktop-root/home/mysc-pv/
+    #ssh <pod_host> rm -r /home/mysc-pv
+    #ssh <pod_host> rm -r /home/localpv
+
+Environment Variables
+    #kubectl run mydb-pod --image=mysql
+    #kubectl get pod
+Pod is crashing with. Lets troubleshoot
+    #kubectl describe pod mydb-pod
+    #kubectl logs -f pod mydb-pod
+Pod terminated with exit code 1. logs state "Database is uninitialized.You need environment variable MYSQL_ROOT_PASSWORD"
+Lets delete pod and redeploy with env
+    #kubectl delete pod mydb-pod
+    #kubectl run mydb-pod --image=mysql --env="MYSQL_ROOT_PASSWORD=something"
+    #kubectl get pod
+    #kubectl logs -f pod mydb-pod
+Pod is running with latest log as "/usr/sbin/mysqld: ready for connections. port:3306"
+Lets run mysql with a deployment instead of a pod.
+    #kubectl create deploy mydb --image=mysql
+    #kubectl get all
+    #kubectl set env deploy mydb MYSQL_ROOT_PASSWORD=somethingelse
+    #kubectl get all
+    #kubectl exec -it pod <pod_name> -- mysql -p
+        #SHOW DATABASES;
+        #USE mysql;
+        #SHOW TABLES;
+kubectl run creates the pod and has the parameter --env to pass any variables the pod would need
+kubectl create deploy cannot accept env variables
+kubectl set env requires a live deployment to operate on.
+Lets keep a copy for later reference.
+    #kubectl get deploy mydb -o yaml > training/generated-env-in-deploy.yaml
+    #kubectl set env deploy mydb MYSQL_ROOT_PASSWORD=YourPasswordHere --dry-run=client -o yaml > training/generated-env-in-deploy.yaml
+Both are the same. You will need to clean up all excess info from the yaml.
+These resources are required for trying ConfigMaps and Secrets.
+Lets cleanup after ConfigMaps and Secrets.
+
+ConfigMaps
+To allow the deployment with environment variables to be used as-is in any cluster, we use configmaps to abstract these env variables.
+ConfigMaps can be used to store environment variables.
+ConfigMaps are scoped by namespace and can be accessed by all deployments and other k8s resource within that namespace.
+Lets create configmap with dbname and dbuser that mysql must create on startup.
+    #kubectl create configmap -h | less
+    #touch training/mydb-cm.env
+        ->define MYSQL_DATABASE, MYSQL_USER, MYSQL_PASSWORD and their values.
+        ->During Secrets section, MYSQL_PASSWORD will be moved to another file
+    #kubectl create configmap mydb-cm --from-env-file=training/mydb-cm.env
+    #kubectl create configmap temp --from-literal=MYSQL_DATABASE=training --from-literal=MYSQL_USER=trainer --from-literal=MYSQL_PASSWORD=anotherone
+    #kubectl get cm
+    #kubectl describe cm mydb-cm
+Lets apply the configmap to our deployment.
+    #kubectl set env deploy mydb --from=configmap/mydb-cm
+    #kubectl get all
+    #kubectl exec -it pod <pod_name> -- mysql -utrainer -p
+        #SHOW DATABASES;
+        #USE training;
+        #SHOW TABLES;
+You can still login to mysql cli as root, 
+Lets keep a copy of the updated deployment and clean it up.
+    #kubectl get deploy mydb -o yaml > training/generated-cm-env-in-deploy.yaml
+ConfigMap can also be use to store one or more configuration files, or any file.
+We could create html files for this exercise. Or get some from one the websites of https://1mb.club/.
+    #wget -pEk https://www.toothycat.net/
+        ->This would dowload all files to load one page. If you use -m flag, wget will download every file associated with every link of the website.
+    #mv www.toothycat.net/ training/
+        ->This path is added to gitignore
+    #kubectl create cm myweb-cm --from-file=training/www.toothycat.net/index.html
+    #kubectl describe cm myweb-cm | less
+This configmap should be considered as a volume.
+We will need to edit the volume spec into the yaml as no imperative commands are available.
+    #kubectl create deploy myweb --image=nginx --dry-run=client -o yaml > training/cm-as-vol-in-deploy.yaml
+    #vim training/cm-as-vol-in-deploy.yaml
+        ->define template volume as configmap myweb-cm and mount it to /usr/share/nginx/html on the container
+    #kubectl apply -f training/cm-as-vol-in-deploy.yaml
+    #kubectl get all -o wide
+    #kubectl expose deploy myweb --port=80 --type=LoadBalancer
+    #kubectl describe svc myweb
+    #kubectl get all -o wide
+    #kubectl get endpoints
+In browser, open http://localhost/ or the External-IP allocated for the service/myweb.
+This same method can be used to use to load all files in a directory or folder into ConfigMap.
+The filenames will be used as the key and the content of that file will be set as its value. 
+Keep in mind, this is not recursive, and the relative path of the files are not recorded in configmap key.
+To load all content of toothycat.net into the deployment using configmap would look like this
+    #kubectl create cm myweb-home-cm --from-file=training/www.toothycat.net/
+    #kubectl create cm myweb-banners-a-cm --from-file=training/www.toothycat.net/banners/any
+    #kubectl create cm myweb-banners-p-cm --from-file=training/www.toothycat.net/banners/permanent
+    #kubectl create cm myweb-css-cm --from-file=training/www.toothycat.net/css
+    #kubectl create cm myweb-img-cm --from-file=training/www.toothycat.net/img
+    #cp training/cm-as-vol-in-deploy.yaml training/multi-cm-as-vol-in-deploy.yaml
+    #vim #training/multi-cm-as-vol-in-deploy.yaml
+        ->Add all the above configmaps as volumes and mount them in the respective mountPath
+    #kubectl apply -f training/multi-cm-as-vol-in-deploy.yaml
+    #kubectl get all -o wide
+Monitor the rolling update for the deployment. Once its complete,
+In browser, open http://localhost/ or the External-IP allocated for the service/myweb.
+A better way to load all content of toothycat.net into a deployment would be as below.
+    ->Create a pvc of about 5mb
+    ->Create a job to run busybox with pvc mounted. Run wget on the container to dowload files of https://www.toothycat.net/ into pvc.
+    ->Create a deployment running nginx with the pvc mounted.
+    ->Create a service LoadBalancer to expose the deployment
+Lets cleanup. The deployment mydb is required for Secrets, so retain it.
+    #kubectl delete svc/myweb deploy/myweb cm/myweb-cm cm/myweb-home-cm cm/myweb-banners-a-cm cm/myweb-banners-p-cm cm/myweb-css-cm cm/myweb-img-cm
+
+Secrets
+The env variables used for mysql deployment were dbname, dbuser, dbpass and rootdbpass.
+Although all these info are sensitive, one can argue passwords are more sensitive that dbname and dbuser. 
+Also, password rotation must be performed on regular intervals. More frequent changes could mean better security. 
+So, lets split these env variables, then recreate the configmap and create a secret
+    #vim training/mydb-cm.env
+        ->remove MYSQL_PASSWORD. Let user and database remain unchanged.
+    #touch training/mydb-secret.env
+        ->define MYSQL_ROOT_PASSWORD and MYSQL_PASSWORD their values.
+        ->This file is excluded by the gitignore
+    #kubectl delete cm/mydb-cm && kubectl create cm mydb-cm --from-env-file=training/mydb-cm.env
+    #kubectl create secret generic mydb-secret --from-env-file=training/mydb-secret.env
+    #kubectl get cm,secret
+    #kubectl describe cm mydb-cm
+    #kubectl describe secret mydb-secret
+When creating secret, you will need to specify the secret_type before secret_name. generic is one of the 3 types of secrets available in k8s.
+The key value pairs of mydb-cm is shown in plain text, while the values of mydb-secret are not. To see the value of a secret,
+    #kubectl get -o yaml secret mydb-secret
+But what you see here is not the actual values used to create the secret.
+The values of k8s secrets are base64 encoded. Not encrypted. This is just slightly more secure than plain text and its content can be decoded anywhere.
+To see the actual value, copy the secret_value of any key and
+    #echo <secret_value> | base64 -d
+Now lets use the cm and secret in mysql deployment
+    #kubectl delete deploy/mydb && kubectl create deploy mydb --image=mysql
+    #kubectl get cm,secret,all
+    #kubectl set env deploy mydb --list
+    #kubectl set env deploy mydb --from=secret/mydb-secret
+    #kubectl set env deploy mydb --from=configmap/mydb-cm
+        ->when I tried using both --from in a single set env, there was no error. But only the final --from was used.
+    #kubectl set env deploy mydb --list
+    #kubeckubectl create secret docker-registry mypvt-registry --docker-server=mypvt.repo.com --docker-username=myname --docker-password=mypass --docker-email=myname@mypvt.comtl get all
+    #kubectl exec -it pod <pod_name> -- mysql -utrainer -p
+        #SHOW DATABASES;
+    #kubectl exec -it pod <pod_name> -- mysql -p
+        #SHOW DATABASES;
+    #kubectl exec -it pod <pod_name> -- env
+You can see both passwords are available in the container in plain text.
+k8s performs base64 Encoding on plain text and files when storing them as values of a secret.
+k8s performs base64 Decoding on secret_value when applying them at the destined deployment or resource.
+Lets keep a copy of the updated deployment and clean it up.
+    #kubectl get deploy mydb -o yaml > training/generated-cm-secret-in-deploy.yaml
+If the deployment was performed with a declarative approach, we would need to type 21 lines in containers.env to record 4 variables.
+As the keys of cm and secret exactly match the the variable names required my mysql, we can replace the 21 lines with 5.
+    #vim training/generated-cm-secret-in-deploy.yaml
+        ->Replace complete containers.env with the below. This modification is not implemented
+        ->{"envFrom":[{"configMapRef":{"name":"mydb-cm"}},{"secretRef":{"name":"mydb-secret"}}]}
+In a scenario where key value pairs need to be excluded or if container needed any of the values with different key name, containers.envFrom cannot be used.
+Now, all env variables are completely abstracted. The deploy.yaml is portable and can be used by anybody anywhere without requiring to edit the file.
+Lets cleanup,
+    #kubectl delete deploy/mydb cm/mydb-cm secret/mydb-secret
+
+There are 3 types of secret. We have used generic, while the other two are tls and registry
+    ->registry secret is used to autheticate to any public/private container registry that will be used by k8s to pull images.
+        #kubectl create secret docker-registry -h | less
+        #kubectl create secret docker-registry mypvt-registry --docker-server=mypvt.repo.com --docker-username=myname --docker-password=mypass --docker-email=myname@mypvt.com
+        #kubectl get secret mypvt-registry -o yaml
+            ->perform base64 decoding on any item that needs re-checking
+        #docker login mypvt2.repo.com
+        #kubectl create secret docker-registry mypvt2-registry --from-file=/home/.docker/config.json
+
+    ->tls secret is used to store cert and key. Used extensively for k8s service accounts and RBAC
+        #kubectl create secret tls -h | less
+        #kubectl create secret tls myssl --cert=path/ssl.crt --key=path/ssl.key
+            ->not tested
+    ->generic secret is used interchangeably with configmap.
+        #kubectl create secret generic -h | less
+        #kubectl create secret generic mypass --from-literal=password
+        #kubectl create secret generic mykey --from-file=path/secret.key
+            ->a common use case would be to create myssh-secret from ~/.ssh/id_rsa
+        #kubectl create secret generic mycreds --from-env-file=path/creds.key
+
+Kubernetes Apis and Api Groups
+The k8s functionalities are governed by api groups. Core funtionality is under the v1 group. 
+Core funtionality has been extended by app/v1, batch/v1 and many other api groups that are bundled with Vanilla k8s installation.
+    #kubectl api-versions | less
+On other Distributions of k8s, like those managed by CSPs, there will be Custom Resource Definitions(CRD) allowing the cloud resources to be used as k8s resources
+    #kubectl api-resources -o wide| less
+    #kubectl api-resources --api-group=networking.k8s.io
+    #kubectl api-resources --api-group=apps
+    #kubectl api-resources --api-group=
+    #kubectl api-resources --namespaced=true
+    #kubectl api-resources --namespaced=false
+kubectl works by processing our command and sending them k8s api-server in the Control Plane, which then executes it.
+Our kubectl is authenticated to the api-server by tls cert and key stored in kubeconfig.
+    #kubectl config view | less
+        -> Note the value of cluster.server
+    #less ~/.kube/config
+api-server will process commands from a curl request as well, provided it passed the authentication.
+In fact kubectl interacts with api-server via https requests.
+    #kubectl get pods --v=8 2> training/temp.txt && less training/temp.txt && rm -f training/temp.txt
+You will be able to see the config loading, the tls GET request to https://cluster.server:6443, and the api-server response.
+Try curl the same url, you will get 403 Forbidden response for user system:anonymous.
+    #curl -k https://localhost:6443/
+    #curl -k https://localhost:6443/api/v1/namespaces/default/pods?limit=500
+If you create some code that requires direct interaction with k8s api-server, you can leverage kubectl proxy.
+    #kubectl proxy --port=8888 &
+kubectl creates a proxy on localhost machine, that listens for http requests on port 8888.
+kubectl proxy will apply its tls tokens to the request, and forwards it as https to k8s cluster api-server. Use with caution.
+DO NOT confuse this with kube-proxy. kube-proxy is a controller of service resources running on k8s cluster, while
+while kubectl proxy is a temporary gateway that extends access to the k8s api-server to any source that can access the kubectl host.
+With the kubectl proxy running as background,
+    #curl http://localhost:8888/api/v1/ | less
+        ->same as kubectl api-resources --api-group=
+    #curl http://localhost:8888/api/v1/namespaces/default/pods | less
+        ->same as kubectl get pods
+    #curl http://localhost:8888/api/v1/namespaces/default/pods/pod_name | less
+        ->same as kubectl get pod <pod_name>
+    #curl -XDELETE http://localhost:8888/api/v1/namespaces/default/pods/pod_name | less
+        ->same as kubectl delete pod <pod_name>
+Lets Cleanup,
+    #jobs -l
+    #kill -9 <pid_of_kubectl_proxy>
+
+Serviceaccounts Roles and Rolebindings
+    #kubectl auth whoami
+    #kubectl auth can-i get pod
+Every namespace has a default serviceaccount.
+Every pod is mounted with this default sa and its secret tls
+    #kubectl create deploy mywget --image=busybox -- sleep 3600
+    #kubectl get all
+    #kubectl describe deploy mywget
+    #kubectl describe pod <pod_name> | less
+        ->lookup occurrences of service. 
+    #kubectl get sa
+    #kubectl describe sa default
+    #kubectl get sa -n kube-system
+Every pod is running with serviceaccount. If not customised, it is the default sa created by k8s on every namespace
+A serviceaccount on its own can do nothing in a k8s cluster
+A role can scope out k8s resources and what verbs can be performed on them. 
+    #kubectl get roles
+    #kubectl get roles -n kube-system
+    #kubectl describe roles <role_name> -n kube-system
+When a rolebinding, links the serviceaccount to a role, it gets permissions to interact with the cluster.
+    #kubectl get rolebindings
+    #kubectl get rolebindings -n kube-system
+    #kubectl describe rolebindings <rolebinding_name> -n kube-system
+The default serviceaccount on our namespace is not associated with any rolebindings. Lets what it can do.
+To make https calls to the api-server, we can use curl or wget. The pods of mywget can run wget but not curl.
+If you want to use curl then create another deployment. Curl provides additional details from the server when making failed requests.  
+    #kubectl create deploy mycurl --image=curlimages/curl -- sleep 3600
+    #kubectl get all
+    #kubectl describe pod <pod_name> | less
+        ->recheck if the service account is default and copy mountpath of its secrets
+If pod_name of mywget deployment is used, skip the curl commands, and if pod_name of mycurl deployment is used, skip the wget commands
+    #kubectl exec -it pod <pod_name> -- sh
+        #curl -k https://kubernetes/api/v1/
+        #wget https://kubernetes/api/v1/
+service/kubernetes is a default service created by the cluster in all namespaces. The endpoint of this service is the api-server
+Access to api-server is forbidden from anonymous users and accounts. Lets autheticate our requests secrets of default serviceaccount
+        #ls -la /var/run/secrets/kubernetes.io/serviceaccount
+        #cat /var/run/secrets/kubernetes.io/serviceaccount/token
+        #TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        #echo $TOKEN
+        #curl -H "Authorization: Bearer $TOKEN" -k https://kubernetes/api/v1/
+        #wget --header="Authorization: Bearer $TOKEN" https://kubernetes/api/v1 -O -
+The default sa is authorized to list the core(v1) api resources and nothing more.
+        #curl -H "Authorization: Bearer $TOKEN" -k https://kubernetes/api/v1/namespaces/default/pods
+        #wget --header="Authorization: Bearer $TOKEN" https://kubernetes/api/v1/namespaces/default/pods -O -
+        #exit
+Let create another serviceaccount that can list pods.
+    #kubectl create sa mysa
+    #kubectl get sa
+    #kubectl create role myrole --verb=get,list,watch --resource=pods,deploy
+    #kubectl get role
+    #kubectl describe role myrole
+    #kubectl create rolebinding mysa-myrole --role=myrole --serviceaccount=default:mysa
+        ->the flag --serviceaccount requires value in <namespace>:<sa_name> format
+    #kubectl get rolebinding
+    #kubectl describe rolebinding mysa-myrole
+Lets apply mysa to our deployments and try the listing pods and getting 
+    #kubectl set sa deploy mywget mysa
+    #kubectl set sa deploy mycurl mysa
+    #kubectl get all
+    #kubectl describe deploy <deploy_name>
+    #kubectl describe pod <pod_name>
+    #kubectl exec -it pod <pod_name> -- sh
+        #TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+        #echo $TOKEN
+        #curl -H "Authorization: Bearer $TOKEN" -k https://kubernetes/api/v1/namespaces/default/pods
+        #wget --header="Authorization: Bearer $TOKEN" https://kubernetes/api/v1/namespaces/default/pods -O -
+        #curl -H "Authorization: Bearer $TOKEN" -k https://kubernetes/apis/apps/v1/namespaces/default/deployments/
+        #wget --header="Authorization: Bearer $TOKEN" https://kubernetes/apis/apps/v1/namespaces/default/deployments/ -O -
+        #exit
+Try creating a new role that can delete and bind it with mysa.
+The wget on busybox doesnt include the --method feature.
+From the pod of mycurl you can try deleting the pod of mywget with the below command 
+    #curl -X DELETE -H "Authorization: Bearer $TOKEN" -k https://kubernetes/api/v1/namespaces/default/pods/pod_name
+Lets Cleanup,
+    #kubectl delete deploy/mywget deploy/mycurl sa/mysa role/myrole rolebinding/mysa-myrole
+
+Blue-Green Deployment Strategy
+This a practice of releasing an application update to a live application with active users.
+This requires 2 versions of the same application running simultaneously, although only one would be accessible.
+If this is known to cause problems, planned downtime would be a better strategy than blue-green. 
+    ->The live application that is planned for phase out are catagorised as blue. This will include the live deployment and may include secrets, sa, cm, pvc, etc
+    ->The application update that is planned for release are catagorised as green.
+        ->Create a new deployment running the new version of the app. Set lables for this deployment using version tags. 
+        ->During the update procedure, refer to this new deployment as the green deployment
+        ->Create a new service and new k8s resources that the funtionality of new deployment depends on. This may include a secrets, sa, cm, pvc, temp_db, etc
+        ->During the update procedure, refer to it as the new service as green service. Also all new dependent resources should be refered as green resources
+        ->Test the green deployment via the green service and ensure all it funtionality passes. 
+        ->If any tests fail, fix it before proceeding. If it cannot be fixed, cancel the release of the application update.
+        ->If all tests pass, we will perform the blue-green switchover and release the application update.
+    ->Update the green deployments to connect to the live dependecies that are not catagorised as blue. This may include the live secrets, sa, cm, pvc, prod_db, etc
+        ->If the connection from the green deployment causes any conflicts or crashes on the live application, disconnect the green.
+        ->If the conflict cannot be resolved, planned downtime should be considered.
+        ->If the conflict is resolved, record the steps and procedures. After blue-green switchover publish it so that it doesnt repeat for future deplyments.
+    ->Switchover : Update live service to use green deployment as its endpoints
+After switchover users will be accessing the updated application.
+    ->Scale down the blue deployment to zero.
+    ->Delete the blue deployment only after the green has successful handled the full application load.
+
+Canary Deployment
+This a practice of releasing an application update to a live application with active users.
+This can be used if the applications has atleast 3 live endpoints 
+This requires app testing of the new version be complete prior to the Canary deployment and no know issues when different app versions running simultaneously.
+If the live application app doesnt fit these requirements, try blue-green or planned downtime
+    ->The deployment of live application is running with atleast 3 pods
+    ->Create new deployment with the updated application with 1 pod. Ensure it has the same labels as that of the live deployment. This is the Canary
+    ->Once the Canary pod is live, it gets added as an additional endpoint to the live service. A random number of user requests will be handled by the Canary.
+    ->If the Canary pass users acceptance, expose it to 50% users by increasing Canary replica count to match that of live application.
+    ->Once the Canary pass users acceptance of 50% of the user base, scale down the live application to zero. This is when the Canary becomes the live application
+    ->You may delete the previous deployment after you are sure that new version has completed user acceptance of almost 100% of your user base.
+This is just a more careful and slower that the rolling update mechanism of deployment.
+
+CRD
+Custom Resource Definitions allows us to extend k8s funtionality by creation our own api-resources.
+    #vim ./training/crd-definition.yaml
+        ->apiVersion: apiextensions.k8s.io/v1 and kind: CustomResourceDefinition
+        ->metadata.name: resource_name.group.fqdn.com
+        ->Object of the shirts crd must accept color and size as strings.
+        ->Object of the backup crd must accept backupType and image as strings and replicas as integer.
+    #vim ./training/crd-object.yaml
+        ->apiVersion: group.fqdn.com and kind: crd_kind
+        ->For Shirt, Define metadata.name, spec.color, and spec.size
+        ->For BackUp, Define metadata.name, spec.backupType, spec.image, spec.replicas
+    #kubectl apply -f ./training/crd-definition.yaml
+    #kubectl api-resources | grep example
+    #kubectl get crd
+    #kubectl apply -f ./training/crd-object.yaml
+    #kubectl get shirt,bks
+    #kubectl get shirt --field-selector spec.size=S
+
+Operators
+You may mistake it for a controller.
+Controllers are pods that continuously watch status of EXISITING k8s object and modifies them if they deviate from desired state. These include core objects and crd objects.
+Operators almost exclusively watch status of crd objects. These can then create and modify CustomResourceDefinitions and deploy controllers that manage objects of these new/modified crds.
+Eg: Tigera operator that manages Calico Deployment.
+
+StatefulSet
+StorageClass is a prerequisite.
+Headless service is a prerequisite.
+Use StatefulSet when you want an ordered deployment.
+Before deleting StatefulSet, scale down replicas to 0. Pod deletion during StatefulSet deletion might be problematic.
+After  deleting StatefulSet, volumes created by it will persist. Manually delete it if you will not deploy the StatefulSet ever again.
+
+
+
+
+
+
+

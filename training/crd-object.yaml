@@ -1,0 +1,41 @@
+apiVersion: stable.example.com/v1
+kind: BackUp
+metadata:
+  name: mybackup
+spec:
+  backupType: full
+  image: linux-image
+  replicas: 4
+---
+apiVersion: stable.example.com/v1
+kind: Shirt
+metadata:
+  name: person
+spec:
+  color: blue
+  size: M
+---
+apiVersion: stable.example.com/v1
+kind: Shirt
+metadata:
+  name: company
+spec:
+  color: blue
+  size: S
+---
+apiVersion: stable.example.com/v1
+kind: Shirt
+metadata:
+  name: place
+spec:
+  color: red
+  size: M
+---
+apiVersion: stable.example.com/v1
+kind: Shirt
+metadata:
+  name: thing
+spec:
+  color: red
+  size: S
+---
